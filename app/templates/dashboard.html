@@ -6,9 +6,9 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root {
-    --bg: #0f1216; --panel: #171b21; --border: #262c35;
+    --bg: #0f1216; --panel: #171b21; --panel2: #1a1f27; --border: #262c35;
     --text: #e6e9ef; --muted: #8b93a3;
-    --ok: #3ddc84; --warn: #f5a524; --crit: #f5455c; --accent: #4c8dff;
+    --ok: #3ddc84; --warn: #f5a524; --high: #ff7a1a; --crit: #f5455c; --accent: #4c8dff;
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Malgun Gothic", sans-serif; }
@@ -19,15 +19,42 @@
   #conn-badge { font-size:11px; padding:3px 8px; border-radius:10px; background:#262c35; color:var(--muted); }
   #conn-badge.live { background:rgba(61,220,132,.15); color:var(--ok); }
   main { padding: 18px 22px; }
-  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:12px; margin-bottom:18px; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
-  .card .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
-  .card .value { font-size:26px; font-weight:600; margin-top:6px; }
-  .card .value.warn { color: var(--warn); }
-  .card .value.crit { color: var(--crit); }
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:18px; }
-  .panel h2 { font-size:13px; color:var(--muted); margin:0 0 10px 0; text-transform:uppercase; letter-spacing:.03em; }
-  #xlog-chart { width:100%; height:220px; }
+
+  /* ---- 카드 (강조 + 임계치 색상) ---- */
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:14px; margin-bottom:20px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px 20px; transition: box-shadow .3s, border-color .3s; }
+  .card.card-metric { padding-bottom:14px; }
+  .card .label { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; display:flex; justify-content:space-between; align-items:center; }
+  .card .value { font-size:32px; font-weight:700; margin-top:8px; line-height:1; transition: color .3s; }
+  .card .sub { font-size:11px; color:var(--muted); margin-top:6px; }
+  .card .value.lvl-warn { color: var(--warn); }
+  .card .value.lvl-high { color: var(--high); }
+  .card .value.lvl-crit { color: var(--crit); }
+  .card.lvl-warn { border-color: rgba(245,165,36,.5); box-shadow: 0 0 0 1px rgba(245,165,36,.15); }
+  .card.lvl-high { border-color: rgba(255,122,26,.6); box-shadow: 0 0 14px rgba(255,122,26,.18); }
+  .card.lvl-crit { border-color: rgba(245,69,92,.7); box-shadow: 0 0 18px rgba(245,69,92,.25); animation: pulse-crit 1.8s ease-in-out infinite; }
+  @keyframes pulse-crit {
+    0%, 100% { box-shadow: 0 0 14px rgba(245,69,92,.2); }
+    50% { box-shadow: 0 0 22px rgba(245,69,92,.4); }
+  }
+  .gauge { height:5px; border-radius:3px; background:#262c35; margin-top:12px; overflow:hidden; }
+  .gauge-fill { height:100%; width:0%; background:var(--accent); transition: width .5s ease, background .3s; border-radius:3px; }
+  .gauge-fill.lvl-warn { background:var(--warn); }
+  .gauge-fill.lvl-high { background:var(--high); }
+  .gauge-fill.lvl-crit { background:var(--crit); }
+
+  /* ---- 블록 패널 (제니퍼 스타일 그리드) ---- */
+  .block-grid { display:grid; grid-template-columns: 1.4fr 1fr; gap:14px; margin-bottom:14px; }
+  .block-grid.thirds { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 980px) { .block-grid, .block-grid.thirds { grid-template-columns: 1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .panel-head h2 { font-size:12.5px; color:var(--muted); margin:0; text-transform:uppercase; letter-spacing:.04em; }
+  .panel-head .detail-link { font-size:11.5px; color:var(--accent); text-decoration:none; white-space:nowrap; }
+  .panel-head .detail-link:hover { text-decoration:underline; }
+  #xlog-chart { width:100%; height:230px; }
+  .mini-chart { width:100%; height:200px; }
+
   table { width:100%; border-collapse: collapse; font-size:12.5px; }
   th { text-align:left; color:var(--muted); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--border); }
   td { padding:6px 8px; border-bottom:1px solid #1d222a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
@@ -53,20 +80,49 @@
 
 <main>
   <div class="cards">
-    <div class="card"><div class="label">CPU (Host)</div><div class="value" id="v-cpu">-</div></div>
-    <div class="card"><div class="label">Memory Used / Total (MB)</div><div class="value" id="v-mem">-</div></div>
+    <div class="card card-metric" id="card-cpu">
+      <div class="label">CPU (Host)</div>
+      <div class="value" id="v-cpu">-</div>
+      <div class="gauge"><div class="gauge-fill" id="gauge-cpu"></div></div>
+    </div>
+    <div class="card card-metric" id="card-mem">
+      <div class="label">Memory Used / Total (MB)</div>
+      <div class="value" id="v-mem">-</div>
+      <div class="sub" id="v-mem-pct">-</div>
+      <div class="gauge"><div class="gauge-fill" id="gauge-mem"></div></div>
+    </div>
     <div class="card"><div class="label">Active Sessions</div><div class="value" id="v-sessions">-</div></div>
     <div class="card"><div class="label">SGA / PGA (MB)</div><div class="value" id="v-sgapga">-</div></div>
     <div class="card"><div class="label">Blocking Chains</div><div class="value" id="v-locks">-</div></div>
   </div>
 
   <div class="panel">
-    <h2>X-LOG · CPU% / Active Sessions (실시간)</h2>
+    <div class="panel-head">
+      <h2>X-LOG · CPU% / Active Sessions (실시간)</h2>
+      <a class="detail-link" href="/detail/cpu-mem">상세보기 ↗</a>
+    </div>
     <div id="xlog-chart"></div>
   </div>
 
+  <div class="block-grid thirds">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Wait Class (실시간, 구간 대기초)</h2>
+        <a class="detail-link" href="/detail/wait-class">상세보기 ↗</a>
+      </div>
+      <div id="waitclass-chart" class="mini-chart"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>CPU 분해 · Sys / User / IO Wait (%)</h2>
+        <a class="detail-link" href="/detail/cpu-breakdown">상세보기 ↗</a>
+      </div>
+      <div id="cpubd-chart" class="mini-chart"></div>
+    </div>
+  </div>
+
   <div class="panel" id="sessions-panel">
-    <h2>실행 중인 쿼리</h2>
+    <div class="panel-head"><h2>실행 중인 쿼리</h2></div>
     <table>
       <thead><tr><th>SID</th><th>USER</th><th>EVENT</th><th>ELAPSED(s)</th><th>BLOCKED BY</th><th>SQL_ID</th><th>SQL TEXT</th></tr></thead>
       <tbody id="sessions-body"><tr><td colspan="7" class="empty">수집 대기 중...</td></tr></tbody>
@@ -74,7 +130,10 @@
   </div>
 
   <div class="panel" id="locks-panel">
-    <h2>Lock / Blocking</h2>
+    <div class="panel-head">
+      <h2>Lock / Blocking</h2>
+      <a class="detail-link" href="/detail/lock-waiting">상세보기 ↗</a>
+    </div>
     <table>
       <thead><tr><th>Blocker SID</th><th>Blocker User</th><th>Waiter SID</th><th>Waiter User</th><th>Wait(s)</th><th>Event</th></tr></thead>
       <tbody id="locks-body"><tr><td colspan="6" class="empty">현재 블로킹 없음</td></tr></tbody>
@@ -82,7 +141,7 @@
   </div>
 
   <div class="panel" id="slow-panel">
-    <h2>슬로우 쿼리 (평균 elapsed ≥ 임계치)</h2>
+    <div class="panel-head"><h2>슬로우 쿼리 (평균 elapsed ≥ 임계치)</h2></div>
     <table>
       <thead><tr><th>SQL_ID</th><th>Schema</th><th>Executions</th><th>Avg Elapsed(s)</th><th>Avg Buffer Gets</th><th>SQL TEXT</th></tr></thead>
       <tbody id="slow-body"><tr><td colspan="6" class="empty">임계치 초과 쿼리 없음</td></tr></tbody>
@@ -93,51 +152,165 @@
 <script>
 const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// 60~70=warn(주황) / 70~80=high(진한주황) / 80~100=crit(레드) / 그 아래는 정상
+function levelOf(pct) {
+  if (pct === null || pct === undefined) return null;
+  if (pct >= 80) return 'lvl-crit';
+  if (pct >= 70) return 'lvl-high';
+  if (pct >= 60) return 'lvl-warn';
+  return null;
+}
+
+function applyLevel(cardEl, valueEl, gaugeEl, pct) {
+  const lvl = levelOf(pct);
+  ['lvl-warn', 'lvl-high', 'lvl-crit'].forEach(c => { cardEl.classList.remove(c); valueEl.classList.remove(c); gaugeEl.classList.remove(c); });
+  if (lvl) { cardEl.classList.add(lvl); valueEl.classList.add(lvl); gaugeEl.classList.add(lvl); }
+  gaugeEl.style.width = Math.max(0, Math.min(100, pct ?? 0)) + '%';
+}
+
+/* ---------------- X-LOG (CPU% / Active Sessions) — 피크값 + 현재값 라벨 ---------------- */
 const xlogChart = echarts.init(document.getElementById('xlog-chart'), null, {renderer:'svg'});
 const MAX_POINTS = 120;
 let xlogData = { time: [], cpu: [], sessions: [] };
 
-function renderChart() {
+function renderXlog() {
   xlogChart.setOption({
     backgroundColor: 'transparent',
-    grid: { left: 40, right: 40, top: 20, bottom: 24 },
+    grid: { left: 40, right: 64, top: 24, bottom: 24 },
     textStyle: { color: '#8b93a3', fontSize: 11 },
+    tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: xlogData.time, axisLine:{lineStyle:{color:'#262c35'}} },
     yAxis: [
       { type:'value', name:'CPU %', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
       { type:'value', name:'Sessions', splitLine:{show:false} }
     ],
     series: [
-      { name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:true, lineStyle:{color:'#4c8dff'}, yAxisIndex:0 },
-      { name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:true, lineStyle:{color:'#3ddc84'}, yAxisIndex:1 }
+      {
+        name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:true,
+        lineStyle:{color:'#4c8dff'}, yAxisIndex:0,
+        endLabel: { show:true, formatter: p => (p.value ?? '-') + '%', color:'#4c8dff', fontSize:11 },
+        markPoint: { symbolSize:44, label:{fontSize:10}, data:[{type:'max', name:'peak'}] }
+      },
+      {
+        name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:true,
+        lineStyle:{color:'#3ddc84'}, yAxisIndex:1,
+        endLabel: { show:true, formatter: p => 'sess ' + (p.value ?? '-'), color:'#3ddc84', fontSize:11 }
+      }
     ]
   });
 }
-renderChart();
-window.addEventListener('resize', () => xlogChart.resize());
+renderXlog();
+window.addEventListener('resize', () => { xlogChart.resize(); waitClassChart.resize(); cpuBdChart.resize(); });
 
 function pushXlogPoint(ts, cpu, sessions) {
   const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
   xlogData.time.push(label); xlogData.cpu.push(cpu); xlogData.sessions.push(sessions);
   if (xlogData.time.length > MAX_POINTS) { xlogData.time.shift(); xlogData.cpu.shift(); xlogData.sessions.shift(); }
-  renderChart();
+  renderXlog();
 }
 
-function setCardClass(el, value, warnAt, critAt) {
-  el.classList.remove('warn','crit');
-  if (value >= critAt) el.classList.add('crit');
-  else if (value >= warnAt) el.classList.add('warn');
+/* ---------------- Wait Class 미니 차트 (스택 영역) ---------------- */
+const waitClassChart = echarts.init(document.getElementById('waitclass-chart'), null, {renderer:'svg'});
+const WC_COLORS = {
+  'User I/O':'#4c8dff', 'System I/O':'#3ddc84', 'Concurrency':'#f5a524', 'Application':'#f5455c',
+  'Commit':'#a78bfa', 'Network':'#22d3ee', 'Configuration':'#94a3b8', 'Administrative':'#eab308',
+  'Scheduler':'#fb7185', 'Cluster':'#34d399', 'Queueing':'#fbbf24', 'Other':'#64748b'
+};
+let waitClassTime = [];
+let waitClassSeries = {}; // class -> array
+
+function renderWaitClass() {
+  const series = Object.keys(waitClassSeries).map(cls => ({
+    name: cls, type: 'line', stack: 'wc', areaStyle: { opacity: .55 }, showSymbol:false,
+    data: waitClassSeries[cls], lineStyle:{width:1, color: WC_COLORS[cls] || '#64748b'}, itemStyle:{color: WC_COLORS[cls] || '#64748b'}
+  }));
+  waitClassChart.setOption({
+    backgroundColor:'transparent',
+    grid:{left:36, right:12, top:10, bottom:20},
+    textStyle:{color:'#8b93a3', fontSize:10},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category', data: waitClassTime, axisLine:{lineStyle:{color:'#262c35'}}},
+    yAxis:{type:'value', name:'sec', splitLine:{lineStyle:{color:'#1d222a'}}},
+    series
+  });
+}
+renderWaitClass();
+
+function pushWaitClass(ts, rows) {
+  if (!rows || rows.length === 0) return;
+  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  waitClassTime.push(label);
+  const seen = new Set();
+  rows.forEach(r => {
+    seen.add(r.wait_class);
+    if (!waitClassSeries[r.wait_class]) waitClassSeries[r.wait_class] = waitClassTime.map(() => 0);
+    waitClassSeries[r.wait_class].push(r.wait_sec ?? 0);
+  });
+  // 이번 틱에 안 나온 클래스는 0으로 채움 (길이 동기화)
+  Object.keys(waitClassSeries).forEach(cls => {
+    if (!seen.has(cls)) waitClassSeries[cls].push(0);
+  });
+  if (waitClassTime.length > MAX_POINTS) {
+    waitClassTime.shift();
+    Object.keys(waitClassSeries).forEach(cls => waitClassSeries[cls].shift());
+  }
+  renderWaitClass();
 }
 
+/* ---------------- CPU 분해 미니 차트 (Sys/User/IOWait 스택 영역) ---------------- */
+const cpuBdChart = echarts.init(document.getElementById('cpubd-chart'), null, {renderer:'svg'});
+let cpuBdTime = [], cpuBdUser = [], cpuBdSys = [], cpuBdIowait = [];
+
+function renderCpuBd() {
+  cpuBdChart.setOption({
+    backgroundColor:'transparent',
+    grid:{left:36, right:12, top:10, bottom:20},
+    textStyle:{color:'#8b93a3', fontSize:10},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category', data: cpuBdTime, axisLine:{lineStyle:{color:'#262c35'}}},
+    yAxis:{type:'value', name:'%', max:100, splitLine:{lineStyle:{color:'#1d222a'}}},
+    series:[
+      {name:'User', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdUser, lineStyle:{width:1,color:'#f5455c'}, itemStyle:{color:'#f5455c'}},
+      {name:'Sys', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdSys, lineStyle:{width:1,color:'#4c8dff'}, itemStyle:{color:'#4c8dff'}},
+      {name:'IO Wait', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdIowait, lineStyle:{width:1,color:'#f5a524'}, itemStyle:{color:'#f5a524'}}
+    ]
+  });
+}
+renderCpuBd();
+
+function pushCpuBd(ts, bd) {
+  if (!bd) return;
+  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  cpuBdTime.push(label);
+  cpuBdUser.push(bd.user_pct ?? 0);
+  cpuBdSys.push(bd.sys_pct ?? 0);
+  cpuBdIowait.push(bd.iowait_pct ?? 0);
+  if (cpuBdTime.length > MAX_POINTS) { cpuBdTime.shift(); cpuBdUser.shift(); cpuBdSys.shift(); cpuBdIowait.shift(); }
+  renderCpuBd();
+}
+
+/* ---------------- 카드 / 테이블 렌더 ---------------- */
 function renderOverview(o) {
   if (!o || o.cpu_pct === undefined) return;
-  const cpuEl = document.getElementById('v-cpu');
-  cpuEl.textContent = (o.cpu_pct ?? '-') + ' %';
-  setCardClass(cpuEl, o.cpu_pct ?? 0, 70, 90);
-  document.getElementById('v-mem').textContent = `${Math.round(o.mem_used_mb)} / ${Math.round(o.mem_total_mb)}`;
+  const cpuCard = document.getElementById('card-cpu');
+  const cpuVal = document.getElementById('v-cpu');
+  const cpuGauge = document.getElementById('gauge-cpu');
+  cpuVal.textContent = (o.cpu_pct ?? '-') + ' %';
+  applyLevel(cpuCard, cpuVal, cpuGauge, o.cpu_pct);
+
+  const memCard = document.getElementById('card-mem');
+  const memVal = document.getElementById('v-mem');
+  const memGauge = document.getElementById('gauge-mem');
+  const memPct = (o.mem_total_mb ? (o.mem_used_mb / o.mem_total_mb * 100) : 0);
+  memVal.textContent = `${Math.round(o.mem_used_mb)} / ${Math.round(o.mem_total_mb)}`;
+  document.getElementById('v-mem-pct').textContent = memPct.toFixed(1) + ' %';
+  applyLevel(memCard, memVal, memGauge, memPct);
+
   document.getElementById('v-sessions').textContent = o.active_sessions ?? '-';
   document.getElementById('v-sgapga').textContent = `${Math.round(o.sga_total_mb)} / ${Math.round(o.pga_allocated_mb)}`;
-  pushXlogPoint(Math.floor(Date.now()/1000), o.cpu_pct ?? 0, o.active_sessions ?? 0);
+
+  const nowTs = Math.floor(Date.now()/1000);
+  pushXlogPoint(nowTs, o.cpu_pct ?? 0, o.active_sessions ?? 0);
 }
 
 function renderSessions(rows) {
@@ -181,6 +354,9 @@ function applyUpdate(msg) {
   renderSessions(msg.sessions);
   renderLocks(msg.locks);
   renderSlow(msg.slow_queries);
+  const nowTs = Math.floor(Date.now()/1000);
+  if (msg.wait_class && msg.wait_class.length) pushWaitClass(nowTs, msg.wait_class);
+  if (msg.cpu_breakdown) pushCpuBd(nowTs, msg.cpu_breakdown);
 }
 
 // --- WebSocket 연결 (재연결 포함) ---
@@ -195,7 +371,7 @@ function connectWS() {
 }
 connectWS();
 
-// 초기 히스토리 로드 (새로고침 시 그래프가 비어있지 않도록)
+// 초기 히스토리 로드 (새로고침 시 X-log 그래프가 비어있지 않도록)
 fetch('/api/xlog?minutes=30').then(r => r.json()).then(rows => {
   rows.forEach(r => pushXlogPoint(r.ts, r.cpu_pct, r.active_sessions));
 });

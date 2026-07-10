@@ -6,6 +6,7 @@ FastAPI 엔트리포인트.
 """
 import asyncio
 import logging
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -64,6 +65,33 @@ async def sql_detail_page(request: Request, sql_id: str):
     )
 
 
+# 맥스게이지 스타일 상세화면. metric 값: cpu-mem, active-sessions, lock-waiting,
+# wait-class, cpu-breakdown, sysstat, total-sessions
+DETAIL_METRICS = {
+    "cpu-mem": "CPU / Memory",
+    "active-sessions": "Active Sessions",
+    "lock-waiting": "Lock Waiting Sessions",
+    "wait-class": "Wait Class",
+    "cpu-breakdown": "CPU (Sys/User/IO Wait)",
+    "sysstat": "Select Stat (IO/Exec/Redo 포함)",
+    "total-sessions": "Total Sessions",
+}
+
+
+@app.get("/detail/{metric}", response_class=HTMLResponse)
+async def detail_page(request: Request, metric: str):
+    return templates.TemplateResponse(
+        "detail.html",
+        {
+            "request": request,
+            "metric": metric,
+            "title": DETAIL_METRICS.get(metric, metric),
+            "is_sysstat": metric == "sysstat",
+            "tracked_stats": queries.TRACKED_SYSSTAT_NAMES,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # REST API (HTMX 부분 갱신 / 초기 로딩용)
 # ---------------------------------------------------------------------------
@@ -91,6 +119,46 @@ async def api_slow_queries():
 @app.get("/api/xlog")
 async def api_xlog(minutes: int = 30):
     return await asyncio.to_thread(sqlite_store.get_xlog, minutes)
+
+
+@app.get("/api/sysstat-names")
+async def api_sysstat_names():
+    """'Select Stat' 드롭다운용 - V$SYSSTAT 전체 지표명 + 실제 추적 중인 목록."""
+    pool = get_pool()
+    with pool.acquire() as conn:
+        names = await asyncio.to_thread(queries.get_available_sysstat_names, conn)
+    return {"names": names, "tracked": queries.TRACKED_SYSSTAT_NAMES}
+
+
+@app.get("/api/detail/{metric}")
+async def api_detail(metric: str, start: int, end: int, stat: Optional[str] = None):
+    """상세화면용 구간 조회. start/end 는 epoch 초."""
+    if metric == "cpu-mem" or metric == "active-sessions":
+        buckets = await asyncio.to_thread(sqlite_store.get_metric_range, start, end)
+        return {"buckets": buckets}
+
+    if metric == "lock-waiting":
+        buckets = await asyncio.to_thread(sqlite_store.get_lock_count_range, start, end)
+        return {"buckets": buckets}
+
+    if metric == "wait-class":
+        series = await asyncio.to_thread(sqlite_store.get_wait_class_range, start, end)
+        return {"series": series}
+
+    if metric == "cpu-breakdown":
+        buckets = await asyncio.to_thread(sqlite_store.get_cpu_breakdown_range, start, end)
+        return {"buckets": buckets}
+
+    if metric == "sysstat":
+        name = stat or queries.TRACKED_SYSSTAT_NAMES[0]
+        buckets = await asyncio.to_thread(sqlite_store.get_sysstat_range, name, start, end)
+        return {"stat": name, "buckets": buckets}
+
+    if metric == "total-sessions":
+        buckets = await asyncio.to_thread(sqlite_store.get_session_count_range, start, end)
+        return {"buckets": buckets}
+
+    return {"error": f"unknown metric: {metric}"}
 
 
 # ---------------------------------------------------------------------------

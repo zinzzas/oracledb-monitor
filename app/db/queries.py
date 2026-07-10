@@ -13,6 +13,8 @@ V$ 동적 성능 뷰 조회 모음.
     GRANT SELECT ON V_$SYSMETRIC     TO monitor_user;
     GRANT SELECT ON V_$SGAINFO       TO monitor_user;
     GRANT SELECT ON V_$PGASTAT       TO monitor_user;
+    GRANT SELECT ON V_$SYSTEM_EVENT  TO monitor_user;
+    GRANT SELECT ON V_$SYSSTAT       TO monitor_user;
 
 주의: V$ACTIVE_SESSION_HISTORY / DBA_HIST_* / AWR 관련 뷰는 여기서 의도적으로
 사용하지 않는다 (Diagnostics Pack 라이선스 대상이라 조회만 해도 라이선스 이슈 발생).
@@ -239,3 +241,93 @@ def get_snapshot(conn) -> dict:
         "mem_total_mb": cpu_mem["mem_total_mb"],
         "active_sessions": active_sessions,
     }
+
+
+# ---------------------------------------------------------------------------
+# 7) Wait Class (V$SYSTEM_EVENT 누적치 - AWR 아님, 인스턴스 시작 이후 누적이라
+#    수집기가 폴링마다 델타를 계산해서 "구간 동안 대기한 초"로 환산한다)
+# ---------------------------------------------------------------------------
+
+def get_system_wait_events(conn) -> dict:
+    """wait_class -> 누적 time_waited_micro. Idle 클래스는 제외(무의미한 대기)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT wait_class, SUM(time_waited_micro)
+            FROM v$system_event
+            WHERE wait_class != 'Idle'
+            GROUP BY wait_class
+            """
+        )
+        return {wc: val for wc, val in cur.fetchall()}
+
+
+# ---------------------------------------------------------------------------
+# 8) OS CPU 시간 분해 (V$OSSTAT 누적치 - Sys/User/IOWait 델타 계산용)
+#    플랫폼에 따라 IOWAIT_TIME 등 일부 stat 이 없을 수 있음 (예: Windows) -
+#    없으면 결과 dict 에 키가 아예 빠지므로 호출부에서 .get() 으로 방어.
+# ---------------------------------------------------------------------------
+
+def get_os_cpu_times(conn) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT stat_name, value FROM v$osstat
+            WHERE stat_name IN ('USER_TIME', 'SYS_TIME', 'IOWAIT_TIME', 'NUM_CPUS')
+            """
+        )
+        return {name.upper(): val for name, val in cur.fetchall()}
+
+
+# ---------------------------------------------------------------------------
+# 9) V$SYSSTAT 누적 지표 (IO/Exec/Redo/Select Stat 탭 - 라이선스 무관 베이스 뷰)
+# ---------------------------------------------------------------------------
+
+TRACKED_SYSSTAT_NAMES = [
+    "session logical reads",
+    "physical reads",
+    "physical reads direct",
+    "physical writes direct",
+    "execute count",
+    "parse count (total)",
+    "redo size",
+    "redo writes",
+    "user commits",
+    "user rollbacks",
+]
+
+
+def get_sysstat_metrics(conn, names: list[str] | None = None) -> dict:
+    """names 에 있는 V$SYSSTAT.NAME 들의 현재 누적값. 이름은 코드에 고정된
+    상수 목록만 사용하므로(사용자 입력 아님) bind 변수로 안전하게 IN 절 구성."""
+    names = names or TRACKED_SYSSTAT_NAMES
+    placeholders = {f"n{i}": name for i, name in enumerate(names)}
+    in_clause = ", ".join(f":{k}" for k in placeholders)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT name, value FROM v$sysstat WHERE name IN ({in_clause})",
+            placeholders,
+        )
+        return {name: val for name, val in cur.fetchall()}
+
+
+def get_available_sysstat_names(conn) -> list[str]:
+    """'Select Stat' 드롭다운용 - 조회 전용, 전체 지표명 목록."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT name FROM v$sysstat ORDER BY name")
+        return [r[0] for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# 10) 세션 카운트 (Total Sessions 탭 - 시점 스냅샷, 델타 아님)
+# ---------------------------------------------------------------------------
+
+def get_session_counts(conn) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, COUNT(*) FROM v$session WHERE type = 'USER' GROUP BY status"
+        )
+        counts = {status.lower(): cnt for status, cnt in cur.fetchall()}
+    active = counts.get("active", 0)
+    inactive = counts.get("inactive", 0)
+    return {"total": active + inactive, "active": active, "inactive": inactive}

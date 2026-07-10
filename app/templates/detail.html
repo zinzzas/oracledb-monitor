@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }} · Oracle DB Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --border: #262c35;
+    --text: #e6e9ef; --muted: #8b93a3;
+    --ok: #3ddc84; --warn: #f5a524; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Malgun Gothic", sans-serif; }
+  header { display:flex; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid var(--border); }
+  header a.back { color:var(--muted); text-decoration:none; font-size:13px; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  main { padding: 18px 22px; max-width: 1280px; }
+
+  .searchbar { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px;
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .searchbar label { font-size:11.5px; color:var(--muted); margin-right:4px; }
+  .searchbar input, .searchbar select {
+    background:#0d1013; border:1px solid var(--border); color:var(--text); border-radius:6px;
+    padding:6px 8px; font-size:12.5px;
+  }
+  .quickbtn { background:#20262f; border:1px solid var(--border); color:var(--text); border-radius:6px;
+    padding:6px 12px; font-size:12px; cursor:pointer; }
+  .quickbtn:hover { background:#262e39; }
+  .quickbtn.active { background:var(--accent); border-color:var(--accent); }
+  .btn-retrieve { background:var(--accent); border:none; color:#fff; border-radius:6px; padding:7px 16px; font-size:12.5px; cursor:pointer; font-weight:600; }
+  .btn-retrieve:hover { opacity:.9; }
+  .sep { width:1px; height:22px; background:var(--border); margin:0 4px; }
+
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .panel h2 { font-size:12.5px; color:var(--muted); margin:0 0 12px 0; text-transform:uppercase; letter-spacing:.04em; }
+  #chart { width:100%; height:440px; }
+  .note { font-size:11.5px; color:var(--muted); margin-top:10px; line-height:1.5; }
+  .loading { color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">&larr; 대시보드로</a>
+  <h1>{{ title }}</h1>
+</header>
+<main>
+  <div class="searchbar">
+    <button class="quickbtn" data-range="1h">최근 1시간</button>
+    <button class="quickbtn" data-range="6h">최근 6시간</button>
+    <button class="quickbtn" data-range="today">오늘</button>
+    <button class="quickbtn" data-range="yesterday">어제</button>
+    <div class="sep"></div>
+    <label>From</label>
+    <input type="datetime-local" id="from-input">
+    <label>To</label>
+    <input type="datetime-local" id="to-input">
+    {% if is_sysstat %}
+    <div class="sep"></div>
+    <label>Stat</label>
+    <select id="stat-select">
+      {% for s in tracked_stats %}
+      <option value="{{ s }}">{{ s }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button class="btn-retrieve" id="btn-retrieve">조회</button>
+  </div>
+
+  <div class="panel">
+    <h2>{{ title }} — 구간을 드래그(줌)하면 그 구간의 최대값이 자동으로 표시됩니다</h2>
+    <div id="chart"><div class="loading">조회 버튼을 눌러 데이터를 불러오세요.</div></div>
+    <div class="note" id="footnote"></div>
+  </div>
+</main>
+
+<script>
+const METRIC = "{{ metric }}";
+const chartEl = document.getElementById('chart');
+let chart = null;
+
+function toLocalInputValue(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setRange(from, to) {
+  document.getElementById('from-input').value = toLocalInputValue(from);
+  document.getElementById('to-input').value = toLocalInputValue(to);
+}
+
+function applyQuickRange(kind) {
+  const now = new Date();
+  let from, to = now;
+  if (kind === '1h') { from = new Date(now.getTime() - 3600 * 1000); }
+  else if (kind === '6h') { from = new Date(now.getTime() - 6 * 3600 * 1000); }
+  else if (kind === 'today') { from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0); }
+  else if (kind === 'yesterday') {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    from = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0);
+    to = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59);
+  }
+  setRange(from, to);
+  document.querySelectorAll('.quickbtn').forEach(b => b.classList.toggle('active', b.dataset.range === kind));
+  fetchAndRender();
+}
+
+document.querySelectorAll('.quickbtn').forEach(btn => {
+  btn.addEventListener('click', () => applyQuickRange(btn.dataset.range));
+});
+document.getElementById('btn-retrieve').addEventListener('click', () => {
+  document.querySelectorAll('.quickbtn').forEach(b => b.classList.remove('active'));
+  fetchAndRender();
+});
+
+function ensureChart() {
+  if (!chart) {
+    chartEl.innerHTML = '';
+    chart = echarts.init(chartEl, null, {renderer:'svg'});
+    window.addEventListener('resize', () => chart.resize());
+  }
+  return chart;
+}
+
+const baseGrid = { left: 55, right: 60, top: 40, bottom: 70 };
+const baseDataZoom = [
+  { type: 'inside', start: 0, end: 100 },
+  { type: 'slider', start: 0, end: 100, height: 22, bottom: 12,
+    borderColor: '#262c35', fillerColor: 'rgba(76,141,255,.15)', handleStyle: {color:'#4c8dff'},
+    textStyle: {color:'#8b93a3'} }
+];
+const baseTextStyle = { color: '#8b93a3', fontSize: 11 };
+
+function tsToLabel(tsSec) {
+  return new Date(tsSec * 1000).toLocaleString('ko-KR', {hour12:false, month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
+
+function lineSeries(name, color, data, opts) {
+  opts = opts || {};
+  return Object.assign({
+    name, type: 'line', data, showSymbol: false, lineStyle: {color, width: opts.width || 2},
+    itemStyle: {color},
+    markPoint: { symbolSize: 46, label:{fontSize:10}, data: [{type:'max', name:'max'}] }
+  }, opts.stack ? {stack: opts.stack, areaStyle: {opacity: .5}} : {});
+}
+
+async function fetchDetail(start, end, stat) {
+  const params = new URLSearchParams({ start, end });
+  if (stat) params.set('stat', stat);
+  const res = await fetch(`/api/detail/${METRIC}?${params}`);
+  return res.json();
+}
+
+async function fetchAndRender() {
+  const fromEl = document.getElementById('from-input');
+  const toEl = document.getElementById('to-input');
+  if (!fromEl.value || !toEl.value) { applyQuickRange('6h'); return; }
+  const start = Math.floor(new Date(fromEl.value).getTime() / 1000);
+  const end = Math.floor(new Date(toEl.value).getTime() / 1000);
+  const statSel = document.getElementById('stat-select');
+  const stat = statSel ? statSel.value : null;
+
+  // ensureChart()를 먼저 호출해 DOM을 확보한 다음, 로딩은 ECharts 내장 API로 표시
+  // (chartEl.innerHTML을 직접 덮어쓰면 이미 생성된 차트의 DOM이 파괴되어 두 번째 검색부터 깨짐)
+  ensureChart();
+  chart.showLoading({ text: '조회 중...', color: '#4c8dff', textColor: '#8b93a3', maskColor: 'rgba(15,18,22,0.7)' });
+  const data = await fetchDetail(start, end, stat);
+  chart.hideLoading();
+
+  let option;
+  const footnote = document.getElementById('footnote');
+  footnote.textContent = '';
+
+  if (METRIC === 'cpu-mem') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: [
+        { type:'value', name:'CPU %', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
+        { type:'value', name:'Mem(MB)', splitLine:{show:false} }
+      ],
+      series: [
+        Object.assign(lineSeries('CPU% MAX', '#4c8dff', data.buckets.map(b => b.cpu_pct_max)), {yAxisIndex:0}),
+        Object.assign(lineSeries('CPU% AVG', '#8ab4ff', data.buckets.map(b => b.cpu_pct_avg), {width:1}), {yAxisIndex:0, lineStyle:{color:'#8ab4ff', width:1, type:'dashed'}}),
+        Object.assign(lineSeries('Mem Used MAX', '#3ddc84', data.buckets.map(b => b.mem_used_mb_max)), {yAxisIndex:1})
+      ]
+    };
+  } else if (METRIC === 'active-sessions') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name:'세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: [
+        lineSeries('MAX', '#4c8dff', data.buckets.map(b => b.active_sessions_max)),
+        Object.assign(lineSeries('AVG', '#3ddc84', data.buckets.map(b => b.active_sessions_avg), {width:1}), {lineStyle:{color:'#3ddc84', width:1, type:'dashed'}})
+      ]
+    };
+  } else if (METRIC === 'lock-waiting') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name:'대기 세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: [
+        lineSeries('MAX', '#f5455c', data.buckets.map(b => b.cnt_max)),
+        Object.assign(lineSeries('AVG', '#f5a524', data.buckets.map(b => b.cnt_avg), {width:1}), {lineStyle:{color:'#f5a524', width:1, type:'dashed'}})
+      ]
+    };
+  } else if (METRIC === 'wait-class') {
+    const classes = Object.keys(data.series || {});
+    const allTs = new Set();
+    classes.forEach(c => data.series[c].forEach(p => allTs.add(p.ts)));
+    const xsSorted = Array.from(allTs).sort((a,b) => a-b);
+    const xs = xsSorted.map(tsToLabel);
+    const colors = {'User I/O':'#4c8dff','System I/O':'#3ddc84','Concurrency':'#f5a524','Application':'#f5455c','Commit':'#a78bfa','Network':'#22d3ee','Configuration':'#94a3b8','Administrative':'#eab308','Scheduler':'#fb7185','Cluster':'#34d399','Queueing':'#fbbf24','Other':'#64748b'};
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name:'초', splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: classes.map(c => {
+        const byTs = Object.fromEntries(data.series[c].map(p => [p.ts, p.wait_sec]));
+        return lineSeries(c, colors[c] || '#64748b', xsSorted.map(t => byTs[t] ?? 0), {stack:'wc'});
+      })
+    };
+    footnote.textContent = '수집기 배포 시점부터의 데이터만 존재합니다 (V$SYSTEM_EVENT 델타 기반, AWR 미사용).';
+  } else if (METRIC === 'cpu-breakdown') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name:'%', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: [
+        lineSeries('User', '#f5455c', data.buckets.map(b => b.user_pct_avg), {stack:'cpu'}),
+        lineSeries('Sys', '#4c8dff', data.buckets.map(b => b.sys_pct_avg), {stack:'cpu'}),
+        lineSeries('IO Wait', '#f5a524', data.buckets.map(b => b.iowait_pct_avg), {stack:'cpu'})
+      ]
+    };
+    footnote.textContent = 'V$OSSTAT 누적치 델타 기반 추정 분해입니다. 플랫폼에 따라 IO Wait 값이 없을 수 있습니다.';
+  } else if (METRIC === 'sysstat') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name: (data.stat || '') + ' /sec', splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: [
+        lineSeries('MAX', '#4c8dff', data.buckets.map(b => b.rate_per_sec_max)),
+        Object.assign(lineSeries('AVG', '#3ddc84', data.buckets.map(b => b.rate_per_sec_avg), {width:1}), {lineStyle:{color:'#3ddc84', width:1, type:'dashed'}})
+      ]
+    };
+    footnote.textContent = `V$SYSSTAT '${data.stat}' 누적치 델타 기반 초당 레이트 (라이선스 무관 베이스 뷰).`;
+  } else if (METRIC === 'total-sessions') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
+      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      yAxis: { type:'value', name:'세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      series: [
+        lineSeries('Total MAX', '#4c8dff', data.buckets.map(b => b.total_max)),
+        Object.assign(lineSeries('Total AVG', '#8ab4ff', data.buckets.map(b => b.total_avg), {width:1}), {lineStyle:{color:'#8ab4ff', width:1, type:'dashed'}}),
+        lineSeries('Active AVG', '#3ddc84', data.buckets.map(b => b.active_avg))
+      ]
+    };
+  }
+
+  chart.setOption(option, true);
+}
+
+// 초기 로드: 최근 6시간
+applyQuickRange('6h');
+</script>
+</body>
+</html>
