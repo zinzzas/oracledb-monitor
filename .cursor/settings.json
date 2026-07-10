@@ -1,0 +1,15 @@
+{
+  "oracledbMonitor": {
+    "conventions": ".cursor/CONVENTIONS.md",
+    "coordinator": ".cursor/coordinators/coordinator.md",
+    "coordinatorAgent": ".cursor/agents/coordinator.md",
+    "agentsIndex": ".cursor/agents/README.md",
+    "workflowsIndex": ".cursor/workflows/README.md",
+    "manifest": ".cursor/project.manifest.json",
+    "docsIndex": "docs/plan.md",
+    "worklog": "docs/worklog/REWORK.md",
+    "id": "oracledb-monitor-harness",
+    "coComposerAlias": ".cursor/co.md",
+    "sourceHarness": "canalframe-harness (축약 이식, /Users/jongpillee/ONS/canalframe-harness)"
+  }
+}

@@ -1,0 +1,47 @@
+---
+description: "Git 필수 — pull·main·feature 브랜치·[{작업자}] 커밋·MR→main"
+alwaysApply: true
+---
+
+# oracledb-monitor — Git Workflow (Mandatory)
+
+Applies to **all Git operations** (pull, branch, commit, push, MR) in this repo.
+
+**Source of truth**: `.cursor/CONVENTIONS.md` · `.cursor/project.manifest.json` → `git`
+
+> `canalframe-git-workflow.mdc` 축약 이식판 — 단일 레포라 멀티레포 반복 절차는 제외.
+
+## 1. Work start (before edit / commit / MR)
+
+1. `git fetch origin`
+2. `git checkout main` (또는 manifest `git.baseBranch`)
+3. `git pull origin main`
+4. `git checkout -b feature/<short-slug>` (prefix from manifest `git.featureBranchPrefix`)
+5. **Do not** commit directly on `main` unless owner explicitly requests hotfix
+
+Coordinator (**@co**) and implementing teams run steps 1–4 **before** first code change when the session involves Git.
+
+## 2. Commit message format
+
+```
+[{author}] {summary}
+```
+
+- `{author}`: manifest `git.authorName` → else `git config user.name` → else ask owner once per session
+- Use **`git commit -m "…"` only** — no `--trailer`
+
+**Example**: `[이종필] 슬로우쿼리 추이 그래프 추가`
+
+## 3. Merge Request (MR)
+
+- **Target branch**: `main` (manifest `git.mrTargetBranch`)
+- Push feature branch, open MR **into `main`**
+- Push / MR creation **only on explicit owner request**
+
+## 4. Role ownership
+
+| Action | Owner |
+|--------|--------|
+| Pull + feature branch at session start | **@co** (Coordinator) |
+| Commit with format above | Implementing team + **@co** on owner commit request |
+| MR draft / publish | **@co** |

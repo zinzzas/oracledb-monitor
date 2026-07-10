@@ -1,0 +1,14 @@
+---
+description: Jinja2 / HTMX / ECharts 대시보드 UI 규칙
+globs: app/templates/**/*.html,app/static/**/*
+alwaysApply: false
+---
+
+# Frontend (Jinja2 / 순정 JS / ECharts)
+
+- **Governance**: `.cursor/agents/teams/frontend.md`
+- **빌드체인 없음**: React/Vue/npm 빌드 도입하지 않는다. 라이브러리는 CDN(ECharts 등)으로만 추가. 이 결정은 "바이브 코딩" 취지(빠른 반복, `pip install`만으로 실행)에 따른 것 — 재검토가 필요하면 `@aa`에게 먼저 상의.
+- **디자인 토큰**: `dashboard.html` 상단 CSS 변수(`--bg`, `--panel`, `--border`, `--text`, `--muted`, `--ok`, `--warn`, `--crit`, `--accent`)를 재사용. 새 페이지도 동일 다크 테마 유지.
+- **실시간 갱신**: WebSocket(`/ws/live`)이 1차 채널. REST(`/api/*`)는 새로고침/초기 로딩 fallback으로만 사용 — 새 화면도 이 이중 채널 패턴을 따른다.
+- **XSS 방지**: SQL 텍스트 등 사용자 제어 불가지만 임의 문자열(쿼리 텍스트)을 innerHTML에 꽂을 때는 반드시 기존 `esc()` 헬퍼로 이스케이프.
+- **접근성/가독성**: 테이블 행에 `title` 속성으로 잘린 텍스트 전문 노출하는 기존 패턴 유지.

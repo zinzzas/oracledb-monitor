@@ -1,0 +1,17 @@
+---
+description: Oracle V$ 쿼리 · 라이선스 경계 · 스키마 규칙
+globs: app/db/**/*.py,app/storage/**/*.py,scripts/test_connection.py
+alwaysApply: false
+---
+
+# DB (Oracle V$ 조회 / SQLite 저장)
+
+- **Governance**: `.cursor/agents/teams/dba.md`
+- **라이선스 경계 (필수 준수)**:
+  - ✅ 사용 가능: `V$SESSION`, `V$SQL`, `V$SQL_PLAN`, `V$LOCK`, `V$OSSTAT`, `V$SYSMETRIC`, `V$SGAINFO`, `V$PGASTAT` 등 Diagnostics/Tuning Pack **불필요** 뷰
+  - ❌ 사용 금지: `V$ACTIVE_SESSION_HISTORY`, `DBA_HIST_*`, AWR 관련 뷰 — **조회만 해도 라이선스 이슈** 발생 가능. 새 쿼리에 이 뷰들이 필요해 보이면 구현 전에 **오너에게 확인**.
+- **바인드 변수**: SQL 문자열 조합(f-string concat) 금지. 항상 `:name` 바인드 변수 사용 (기존 `queries.py` 패턴 유지) — SQL Injection 방지.
+- **쓰기 금지**: 이 프로젝트는 원칙적으로 **Oracle에 대해 읽기 전용(SELECT)**. INSERT/UPDATE/DDL/세션 kill 등 쓰기 작업은 **스코프 밖** — 요청이 있어도 오너 명시 승인 없이 구현하지 않는다.
+- **CLOB 처리**: `V$SQL.SQL_FULLTEXT` 등 CLOB 컬럼은 `_clob_to_str()` 헬퍼로 문자열 변환 (기존 패턴 유지, LOB 객체를 그대로 반환하지 않음).
+- **권한**: 새 뷰를 쓰면 README/CONVENTIONS의 `GRANT SELECT_CATALOG_ROLE` 안내에 필요한 권한을 추가로 문서화.
+- **SQLite 저장소**: `sqlite_store.py`는 수집기(단일 writer)에서만 쓴다는 전제 — 동시 쓰기 경합 코드 추가 시 이 전제가 깨지지 않는지 확인.

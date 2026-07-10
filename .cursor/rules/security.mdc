@@ -1,0 +1,13 @@
+---
+description: "보안 필수 — 크리덴셜, 라이선스 경계, 읽기 전용 원칙"
+alwaysApply: true
+---
+
+# Security (oracledb-monitor)
+
+- **크리덴셜**: `ORACLE_PASSWORD` 등은 `.env`에만 존재 (`.gitignore`에 이미 포함). 코드/로그/커밋 메시지에 평문 노출 금지. `.env.example`에는 placeholder만.
+- **로그**: 접속 계정명은 로그 가능하나, 비밀번호·전체 DSN(host 노출 민감 시)은 에러 로그에 그대로 찍히지 않도록 `collectors/metrics_collector.py`의 `logger.exception` 패턴 유지 시 값 자체를 출력하지 않는다.
+- **읽기 전용 원칙**: 이 프로젝트는 Oracle에 대해 **SELECT만** 수행한다. DML/DDL/세션 kill/GRANT 실행 코드는 오너의 명시적 승인 없이 추가하지 않는다 (`db.mdc` 동일 원칙).
+- **라이선스 경계**: `V$ACTIVE_SESSION_HISTORY`/`DBA_HIST_*`/AWR 뷰 — 보안이 아닌 **라이선스 리스크**지만 동일하게 always-apply로 취급 (`db.mdc` 상세).
+- **SQL Injection**: 모든 V$ 쿼리는 바인드 변수(`:name`) 사용, 문자열 concat 금지.
+- **WebSocket**: `/ws/live`는 인증 없이 열려있음(개인/내부망 전제) — 외부 노출 배포 시 `@security`에게 먼저 검토 요청.

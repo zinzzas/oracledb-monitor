@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>SQL 상세 · {{ sql_id }}</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171b21; --border:#262c35; --text:#e6e9ef; --muted:#8b93a3; --accent:#4c8dff; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,"Malgun Gothic",sans-serif; }
+  header { padding:14px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; }
+  header a { color:var(--muted); text-decoration:none; font-size:13px; }
+  header h1 { font-size:15px; margin:0; font-family:monospace; }
+  main { padding: 18px 22px; max-width: 1000px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:18px; }
+  .panel h2 { font-size:13px; color:var(--muted); margin:0 0 10px 0; text-transform:uppercase; letter-spacing:.03em; }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:13px; background:#0d1013; padding:12px; border-radius:6px; border:1px solid var(--border); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+  .stat .label { font-size:11px; color:var(--muted); }
+  .stat .value { font-size:18px; font-weight:600; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:5px 8px; border-bottom:1px solid var(--border); }
+  td { padding:5px 8px; border-bottom:1px solid #1d222a; font-family:monospace; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; 대시보드로</a>
+  <h1>SQL_ID: {{ sql_id }}</h1>
+</header>
+<main>
+  {% if not detail %}
+    <div class="panel">현재 공유 풀(shared pool)에서 이 SQL_ID를 찾을 수 없습니다. (Age-out 되었을 수 있음)</div>
+  {% else %}
+  <div class="panel">
+    <h2>통계</h2>
+    <div class="stats">
+      <div class="stat"><div class="label">Executions</div><div class="value">{{ detail.executions }}</div></div>
+      <div class="stat"><div class="label">Elapsed (sec)</div><div class="value">{{ (detail.elapsed_time / 1000000) | round(2) }}</div></div>
+      <div class="stat"><div class="label">CPU Time (sec)</div><div class="value">{{ (detail.cpu_time / 1000000) | round(2) }}</div></div>
+      <div class="stat"><div class="label">Buffer Gets</div><div class="value">{{ detail.buffer_gets }}</div></div>
+      <div class="stat"><div class="label">Disk Reads</div><div class="value">{{ detail.disk_reads }}</div></div>
+      <div class="stat"><div class="label">Rows Processed</div><div class="value">{{ detail.rows_processed }}</div></div>
+      <div class="stat"><div class="label">Schema</div><div class="value">{{ detail.parsing_schema_name }}</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>SQL 전문</h2>
+    <pre>{{ detail.sql_fulltext }}</pre>
+  </div>
+
+  <div class="panel">
+    <h2>실행 계획</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Operation</th><th>Object</th><th>Cost</th><th>Cardinality</th></tr></thead>
+      <tbody>
+        {% for p in detail.plan %}
+        <tr>
+          <td>{{ p.id }}</td>
+          <td>{{ p.indented_op }} {{ p.options or '' }}</td>
+          <td>{{ p.object_name or '' }}</td>
+          <td>{{ p.cost if p.cost is not none else '-' }}</td>
+          <td>{{ p.cardinality if p.cardinality is not none else '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</main>
+</body>
+</html>

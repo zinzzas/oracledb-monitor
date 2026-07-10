@@ -1,0 +1,23 @@
+{
+  "projectId": "oracledb-monitor",
+  "repoLayout": "single-repo",
+  "backendStack": "python-fastapi",
+  "uiStack": "jinja2-htmx-echarts",
+  "dbTarget": "oracle-19c-client-only",
+  "activeTeams": [
+    "aa",
+    "backend",
+    "dba",
+    "frontend",
+    "tester",
+    "security"
+  ],
+  "git": {
+    "baseBranch": "main",
+    "mrTargetBranch": "main",
+    "featureBranchPrefix": "feature/",
+    "commitMessageFormat": "[{author}] {summary}",
+    "authorName": ""
+  },
+  "notes": "canalframe-harness(멀티레포·Java/Gradle·React|Vue) 축약판. 단일 레포·Python/FastAPI·서버렌더 UI에 맞게 팀·워크플로를 간소화함. planner+architect+aa → aa 하나로 통합, fe-react/fe-vue → frontend, be-core/be-service → backend."
+}

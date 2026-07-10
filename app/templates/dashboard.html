@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Oracle DB Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --border: #262c35;
+    --text: #e6e9ef; --muted: #8b93a3;
+    --ok: #3ddc84; --warn: #f5a524; --crit: #f5455c; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Malgun Gothic", sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--border); }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  nav a { color:var(--muted); text-decoration:none; margin-left:18px; font-size:13px; }
+  nav a.active { color:var(--text); }
+  #conn-badge { font-size:11px; padding:3px 8px; border-radius:10px; background:#262c35; color:var(--muted); }
+  #conn-badge.live { background:rgba(61,220,132,.15); color:var(--ok); }
+  main { padding: 18px 22px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:12px; margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+  .card .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  .card .value { font-size:26px; font-weight:600; margin-top:6px; }
+  .card .value.warn { color: var(--warn); }
+  .card .value.crit { color: var(--crit); }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:18px; }
+  .panel h2 { font-size:13px; color:var(--muted); margin:0 0 10px 0; text-transform:uppercase; letter-spacing:.03em; }
+  #xlog-chart { width:100%; height:220px; }
+  table { width:100%; border-collapse: collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:6px 8px; border-bottom:1px solid #1d222a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
+  tr:hover td { background:#1b2028; }
+  a.sqlid { color:var(--accent); text-decoration:none; font-family: monospace; }
+  .empty { color:var(--muted); font-size:12.5px; padding:12px 0; }
+  .badge-lock { background:rgba(245,69,92,.15); color:var(--crit); padding:2px 6px; border-radius:4px; font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔶 Oracle DB Monitor</h1>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <nav>
+      <a href="/" class="active">대시보드</a>
+      <a href="#sessions-panel">실행 쿼리</a>
+      <a href="#locks-panel">Lock</a>
+      <a href="#slow-panel">슬로우 쿼리</a>
+    </nav>
+    <span id="conn-badge">연결 중...</span>
+  </div>
+</header>
+
+<main>
+  <div class="cards">
+    <div class="card"><div class="label">CPU (Host)</div><div class="value" id="v-cpu">-</div></div>
+    <div class="card"><div class="label">Memory Used / Total (MB)</div><div class="value" id="v-mem">-</div></div>
+    <div class="card"><div class="label">Active Sessions</div><div class="value" id="v-sessions">-</div></div>
+    <div class="card"><div class="label">SGA / PGA (MB)</div><div class="value" id="v-sgapga">-</div></div>
+    <div class="card"><div class="label">Blocking Chains</div><div class="value" id="v-locks">-</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>X-LOG · CPU% / Active Sessions (실시간)</h2>
+    <div id="xlog-chart"></div>
+  </div>
+
+  <div class="panel" id="sessions-panel">
+    <h2>실행 중인 쿼리</h2>
+    <table>
+      <thead><tr><th>SID</th><th>USER</th><th>EVENT</th><th>ELAPSED(s)</th><th>BLOCKED BY</th><th>SQL_ID</th><th>SQL TEXT</th></tr></thead>
+      <tbody id="sessions-body"><tr><td colspan="7" class="empty">수집 대기 중...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="locks-panel">
+    <h2>Lock / Blocking</h2>
+    <table>
+      <thead><tr><th>Blocker SID</th><th>Blocker User</th><th>Waiter SID</th><th>Waiter User</th><th>Wait(s)</th><th>Event</th></tr></thead>
+      <tbody id="locks-body"><tr><td colspan="6" class="empty">현재 블로킹 없음</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="slow-panel">
+    <h2>슬로우 쿼리 (평균 elapsed ≥ 임계치)</h2>
+    <table>
+      <thead><tr><th>SQL_ID</th><th>Schema</th><th>Executions</th><th>Avg Elapsed(s)</th><th>Avg Buffer Gets</th><th>SQL TEXT</th></tr></thead>
+      <tbody id="slow-body"><tr><td colspan="6" class="empty">임계치 초과 쿼리 없음</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const xlogChart = echarts.init(document.getElementById('xlog-chart'), null, {renderer:'svg'});
+const MAX_POINTS = 120;
+let xlogData = { time: [], cpu: [], sessions: [] };
+
+function renderChart() {
+  xlogChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 40, right: 40, top: 20, bottom: 24 },
+    textStyle: { color: '#8b93a3', fontSize: 11 },
+    xAxis: { type: 'category', data: xlogData.time, axisLine:{lineStyle:{color:'#262c35'}} },
+    yAxis: [
+      { type:'value', name:'CPU %', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
+      { type:'value', name:'Sessions', splitLine:{show:false} }
+    ],
+    series: [
+      { name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:true, lineStyle:{color:'#4c8dff'}, yAxisIndex:0 },
+      { name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:true, lineStyle:{color:'#3ddc84'}, yAxisIndex:1 }
+    ]
+  });
+}
+renderChart();
+window.addEventListener('resize', () => xlogChart.resize());
+
+function pushXlogPoint(ts, cpu, sessions) {
+  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  xlogData.time.push(label); xlogData.cpu.push(cpu); xlogData.sessions.push(sessions);
+  if (xlogData.time.length > MAX_POINTS) { xlogData.time.shift(); xlogData.cpu.shift(); xlogData.sessions.shift(); }
+  renderChart();
+}
+
+function setCardClass(el, value, warnAt, critAt) {
+  el.classList.remove('warn','crit');
+  if (value >= critAt) el.classList.add('crit');
+  else if (value >= warnAt) el.classList.add('warn');
+}
+
+function renderOverview(o) {
+  if (!o || o.cpu_pct === undefined) return;
+  const cpuEl = document.getElementById('v-cpu');
+  cpuEl.textContent = (o.cpu_pct ?? '-') + ' %';
+  setCardClass(cpuEl, o.cpu_pct ?? 0, 70, 90);
+  document.getElementById('v-mem').textContent = `${Math.round(o.mem_used_mb)} / ${Math.round(o.mem_total_mb)}`;
+  document.getElementById('v-sessions').textContent = o.active_sessions ?? '-';
+  document.getElementById('v-sgapga').textContent = `${Math.round(o.sga_total_mb)} / ${Math.round(o.pga_allocated_mb)}`;
+  pushXlogPoint(Math.floor(Date.now()/1000), o.cpu_pct ?? 0, o.active_sessions ?? 0);
+}
+
+function renderSessions(rows) {
+  const body = document.getElementById('sessions-body');
+  if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="7" class="empty">현재 실행 중인 쿼리 없음</td></tr>'; return; }
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.sid)}</td><td>${esc(r.username)}</td><td>${esc(r.event)}</td>
+      <td>${esc(r.elapsed_sec)}</td><td>${r.blocking_session ? '<span class="badge-lock">SID ' + esc(r.blocking_session) + '</span>' : '-'}</td>
+      <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}">${esc(r.sql_id)}</a>` : '-'}</td>
+      <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,80))}</td>
+    </tr>`).join('');
+}
+
+function renderLocks(rows) {
+  const body = document.getElementById('locks-body');
+  document.getElementById('v-locks').textContent = rows ? rows.length : 0;
+  if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="6" class="empty">현재 블로킹 없음</td></tr>'; return; }
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.blocker_sid)}</td><td>${esc(r.blocker_username)}</td>
+      <td>${esc(r.waiter_sid)}</td><td>${esc(r.waiter_username)}</td>
+      <td>${esc(r.seconds_in_wait)}</td><td>${esc(r.event)}</td>
+    </tr>`).join('');
+}
+
+function renderSlow(rows) {
+  const body = document.getElementById('slow-body');
+  if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="6" class="empty">임계치 초과 쿼리 없음</td></tr>'; return; }
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td><a class="sqlid" href="/sql/${esc(r.sql_id)}">${esc(r.sql_id)}</a></td>
+      <td>${esc(r.parsing_schema_name)}</td><td>${esc(r.executions)}</td>
+      <td>${esc(r.avg_elapsed_sec)}</td><td>${esc(r.avg_buffer_gets)}</td>
+      <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,80))}</td>
+    </tr>`).join('');
+}
+
+function applyUpdate(msg) {
+  renderOverview(msg.overview);
+  renderSessions(msg.sessions);
+  renderLocks(msg.locks);
+  renderSlow(msg.slow_queries);
+}
+
+// --- WebSocket 연결 (재연결 포함) ---
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+  const badge = document.getElementById('conn-badge');
+  ws.onopen = () => { badge.textContent = 'LIVE'; badge.classList.add('live'); };
+  ws.onclose = () => { badge.textContent = '재연결 중...'; badge.classList.remove('live'); setTimeout(connectWS, 2000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (evt) => { try { applyUpdate(JSON.parse(evt.data)); } catch(e) { console.error(e); } };
+}
+connectWS();
+
+// 초기 히스토리 로드 (새로고침 시 그래프가 비어있지 않도록)
+fetch('/api/xlog?minutes=30').then(r => r.json()).then(rows => {
+  rows.forEach(r => pushXlogPoint(r.ts, r.cpu_pct, r.active_sessions));
+});
+</script>
+</body>
+</html>

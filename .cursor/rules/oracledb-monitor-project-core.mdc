@@ -1,0 +1,46 @@
+---
+description: oracledb-monitor 워크스페이스 경로·모듈·스택·manifest 요약
+alwaysApply: true
+---
+
+# oracledb-monitor — project core
+
+> `canalframe-project-core.mdc` 축약 이식판. 원본은 멀티레포(`apps/apiserver`+`apps/react|vuejs`) 전제였으나, 이 프로젝트는 **단일 레포**.
+
+## Manifest
+
+Read `.cursor/project.manifest.json`:
+
+- `backendStack`: `python-fastapi` 고정
+- `uiStack`: `jinja2-htmx-echarts` 고정 (별도 빌드체인 없음)
+- `dbTarget`: `oracle-19c-client-only` — 서버 접속 불가, `python-oracledb` Thin mode로만 접속
+- `activeTeams`: `aa`, `backend`, `dba`, `frontend`, `tester`, `security`
+- `git`: `baseBranch`/`mrTargetBranch`(기본 `main`), `authorName`, `featureBranchPrefix`
+
+## 경로 구조 (단일 레포, `apps/` 분리 없음)
+
+- `app/main.py` — FastAPI 엔트리포인트, 라우팅, WebSocket
+- `app/config.py` — `.env` 기반 설정 (pydantic-settings)
+- `app/db/connection.py` — python-oracledb Thin mode 커넥션 풀
+- `app/db/queries.py` — V$ 뷰 조회 함수 (CPU/Mem/세션/Lock/슬로우쿼리) — **라이선스 경계 준수 필수**, 상세: `rules/db.mdc`
+- `app/collectors/metrics_collector.py` — APScheduler 주기 수집 + WebSocket broadcast
+- `app/storage/sqlite_store.py` — X-log/슬로우쿼리/Lock 히스토리 SQLite 저장
+- `app/templates/` — Jinja2 대시보드/상세 페이지 (다크테마, ECharts CDN, 순정 JS)
+- `app/static/` — 정적 자산
+- `scripts/test_connection.py` — DB 접속 독립 검증 스크립트
+- `docs/plan.md` — 설계 문서 (기술스택 근거, IA, 벤치마킹, 로드맵)
+- `docs/worklog/` — 작업 이력
+
+## Governance docs (workspace)
+
+- `.cursor/CONVENTIONS.md`
+- `.cursor/coordinators/coordinator.md`, `.cursor/agents/coordinator.md`
+- `.cursor/workflows/` — 요청 유형별 템플릿
+- `.cursor/agents/README.md` — 팀 인덱스
+
+## AI / docs
+
+- 설계 문서: `docs/plan.md`
+- Worklog: `docs/worklog/REWORK.md`
+
+Node 빌드체인 없음 — `app/templates/`, `app/static/`는 Python 서버가 그대로 서빙. 명령은 프로젝트 루트에서 `uvicorn app.main:app` 또는 `python scripts/test_connection.py`.
