@@ -3,136 +3,322 @@
 <head>
 <meta charset="UTF-8">
 <title>Oracle DB Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
+  /* ---- MaxGauge DPM 다크 톤 ---- */
   :root {
-    --bg: #0f1216; --panel: #171b21; --panel2: #1a1f27; --border: #262c35;
-    --text: #e6e9ef; --muted: #8b93a3;
-    --ok: #3ddc84; --warn: #f5a524; --high: #ff7a1a; --crit: #f5455c; --accent: #4c8dff;
+    --bg: #121212; --panel: #1e1e1e; --panel-border: #2a2a2a;
+    --text: #e8e8e8; --body-c: #d0d0d0; --muted: #8a8a8a;
+    --hairline: #333333; --hairline-strong: #444444; --surface-soft: #252525;
+    --surface-dark: #0d0d0d; --sidebar-bg: #161616;
+    --on-dark: #ffffff; --on-dark-mute: rgba(255,255,255,.65);
+    --primary: #4ade80; --on-primary: #0a0a0a; --primary-dark: #22c55e;
+    --link-blue: #60a5fa; --error: #f87171; --warning-bright: #fbbf24; --warning: #fb923c;
+    --radius: 4px; --font: 'Inter', Arial, Helvetica, sans-serif; --sidebar-w: 56px;
+    --gap-sm: 12px; --gap-md: 20px; --gap-lg: 24px;
+    --ink: var(--text); --canvas: var(--panel); --mute: var(--muted);
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Malgun Gothic", sans-serif; }
-  header { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--border); }
-  header h1 { font-size:16px; margin:0; font-weight:600; }
-  nav a { color:var(--muted); text-decoration:none; margin-left:18px; font-size:13px; }
-  nav a.active { color:var(--text); }
-  #conn-badge { font-size:11px; padding:3px 8px; border-radius:10px; background:#262c35; color:var(--muted); }
-  #conn-badge.live { background:rgba(61,220,132,.15); color:var(--ok); }
-  main { padding: 18px 22px; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); }
+  a { color:var(--link-blue); }
 
-  /* ---- 카드 (강조 + 임계치 색상) ---- */
-  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:14px; margin-bottom:20px; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px 20px; transition: box-shadow .3s, border-color .3s; }
-  .card.card-metric { padding-bottom:14px; }
-  .card .label { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; display:flex; justify-content:space-between; align-items:center; }
-  .card .value { font-size:32px; font-weight:700; margin-top:8px; line-height:1; transition: color .3s; }
-  .card .sub { font-size:11px; color:var(--muted); margin-top:6px; }
-  .card .value.lvl-warn { color: var(--warn); }
-  .card .value.lvl-high { color: var(--high); }
-  .card .value.lvl-crit { color: var(--crit); }
-  .card.lvl-warn { border-color: rgba(245,165,36,.5); box-shadow: 0 0 0 1px rgba(245,165,36,.15); }
-  .card.lvl-high { border-color: rgba(255,122,26,.6); box-shadow: 0 0 14px rgba(255,122,26,.18); }
-  .card.lvl-crit { border-color: rgba(245,69,92,.7); box-shadow: 0 0 18px rgba(245,69,92,.25); animation: pulse-crit 1.8s ease-in-out infinite; }
-  @keyframes pulse-crit {
-    0%, 100% { box-shadow: 0 0 14px rgba(245,69,92,.2); }
-    50% { box-shadow: 0 0 22px rgba(245,69,92,.4); }
+  .sidebar {
+    position:fixed; left:0; top:0; bottom:0; width:var(--sidebar-w);
+    background:var(--sidebar-bg); display:flex; flex-direction:column; align-items:center;
+    padding:16px 0; gap:4px; z-index:10; border-right:1px solid var(--panel-border);
   }
-  .gauge { height:5px; border-radius:3px; background:#262c35; margin-top:12px; overflow:hidden; }
-  .gauge-fill { height:100%; width:0%; background:var(--accent); transition: width .5s ease, background .3s; border-radius:3px; }
-  .gauge-fill.lvl-warn { background:var(--warn); }
-  .gauge-fill.lvl-high { background:var(--high); }
-  .gauge-fill.lvl-crit { background:var(--crit); }
+  .sidebar .brand { color:var(--primary); font-size:20px; margin-bottom:14px; font-weight:700; }
+  .navicon {
+    width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    color:var(--on-dark-mute); text-decoration:none; position:relative;
+  }
+  .navicon svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; }
+  .navicon:hover { background:var(--hairline-strong); color:var(--on-dark); }
+  .navicon.active { background:var(--primary); color:var(--on-primary); }
+  .navicon .tip {
+    position:absolute; left:calc(var(--sidebar-w) + 8px); background:var(--surface-soft); color:var(--on-dark);
+    font-size:11px; font-weight:700; padding:5px 12px; border-radius:999px;
+    white-space:nowrap; opacity:0; pointer-events:none; border:1px solid var(--hairline-strong); z-index:20;
+  }
+  .navicon:hover .tip { opacity:1; }
+  .sidebar-bottom { margin-top:auto; }
 
-  /* ---- 블록 패널 (제니퍼 스타일 그리드) ---- */
-  .block-grid { display:grid; grid-template-columns: 1.4fr 1fr; gap:14px; margin-bottom:14px; }
-  .block-grid.thirds { grid-template-columns: 1fr 1fr; }
-  @media (max-width: 980px) { .block-grid, .block-grid.thirds { grid-template-columns: 1fr; } }
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
-  .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-  .panel-head h2 { font-size:12.5px; color:var(--muted); margin:0; text-transform:uppercase; letter-spacing:.04em; }
-  .panel-head .detail-link { font-size:11.5px; color:var(--accent); text-decoration:none; white-space:nowrap; }
-  .panel-head .detail-link:hover { text-decoration:underline; }
-  #xlog-chart { width:100%; height:230px; }
-  .mini-chart { width:100%; height:200px; }
+  header {
+    margin-left:var(--sidebar-w); display:flex; align-items:center; justify-content:space-between;
+    padding:0 var(--gap-lg); height:48px; background:var(--surface-dark); border-bottom:1px solid var(--panel-border);
+  }
+  header .htitle { display:flex; align-items:center; gap:var(--gap-sm); }
+  header h1 { font-size:14px; margin:0; font-weight:700; color:var(--on-dark); letter-spacing:.02em; }
+  header .instance-badge { font-size:11px; padding:3px 10px; border:1px solid var(--hairline-strong); color:var(--body-c); border-radius:999px; font-weight:700; }
+  #conn-badge { font-size:11px; padding:4px 12px; border-radius:999px; background:var(--surface-soft); color:var(--muted); font-weight:700; }
+  #conn-badge.live { background:var(--primary); color:var(--on-primary); }
 
-  table { width:100%; border-collapse: collapse; font-size:12.5px; }
-  th { text-align:left; color:var(--muted); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--border); }
-  td { padding:6px 8px; border-bottom:1px solid #1d222a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
-  tr:hover td { background:#1b2028; }
-  a.sqlid { color:var(--accent); text-decoration:none; font-family: monospace; }
-  .empty { color:var(--muted); font-size:12.5px; padding:12px 0; }
-  .badge-lock { background:rgba(245,69,92,.15); color:var(--crit); padding:2px 6px; border-radius:4px; font-size:11px; }
+  main {
+    margin-left:var(--sidebar-w); padding:var(--gap-lg); padding-bottom:48px;
+    max-width:calc(1600px + var(--sidebar-w)); display:flex; flex-direction:column; gap:var(--gap-md);
+  }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:var(--gap-sm); }
+  .card { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:var(--gap-sm) var(--gap-md); }
+  .card .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; font-weight:700; }
+  .card .value { font-size:24px; font-weight:700; margin-top:6px; line-height:1; color:var(--text); }
+
+  .grid3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--gap-md); align-items:stretch; }
+  .grid2 { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--gap-md); align-items:stretch; }
+  @media (max-width: 1200px) { .grid3 { grid-template-columns: 1fr; } }
+  @media (max-width: 980px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .panel {
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:var(--gap-md); display:flex; flex-direction:column; height:100%; min-height:0;
+  }
+  .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--gap-sm); min-height:28px; flex-shrink:0; }
+  .panel-head h2 { font-size:12px; color:var(--body-c); margin:0; letter-spacing:.02em; font-weight:700; }
+  .panel-head .detail-link {
+    font-size:11px; color:var(--muted); text-decoration:none; white-space:nowrap; font-weight:700;
+    border:1px solid var(--hairline-strong); border-radius:999px; padding:3px 12px;
+  }
+  .panel-head .detail-link:hover { background:var(--primary); color:var(--on-primary); border-color:var(--primary); }
+
+  .donut-row { display:flex; justify-content:space-evenly; align-items:center; flex:1; gap:var(--gap-sm); }
+  .donut-col { text-align:center; flex:1; }
+  .donut-chart { width:120px; height:120px; margin:0 auto; }
+  .donut-sub { font-size:11px; color:var(--muted); margin-top:var(--gap-sm); line-height:1.6; }
+
+  #scatter-chart { flex:1; min-height:200px; width:100%; }
+  .scatter-hint { font-size:10.5px; color:var(--muted); margin-top:var(--gap-sm); flex-shrink:0; }
+
+  .alert-table-wrap { flex:1; overflow-y:auto; max-height:280px; min-height:0; }
+  .alert-level { padding:2px 10px; border-radius:999px; font-size:10.5px; font-weight:700; color:var(--on-primary); }
+  .alert-level.Critical { background:var(--error); }
+  .alert-level.Warning { background:var(--warning-bright); }
+
+  .trend-controls { display:flex; flex-wrap:wrap; align-items:center; gap:var(--gap-sm); margin-bottom:var(--gap-sm); font-size:12px; }
+  .trend-controls select {
+    background:var(--surface-soft); border:1px solid var(--hairline); color:var(--text); border-radius:var(--radius);
+    padding:5px 8px; font-size:11.5px; font-family:var(--font); max-width:220px;
+  }
+  .trend-controls label { display:flex; align-items:center; gap:4px; color:var(--body-c); cursor:pointer; }
+  .trend-controls input[type=checkbox] { accent-color: var(--primary); }
+  .btn-primary-sm {
+    background:var(--primary); border:1px solid var(--primary); color:var(--on-primary); border-radius:999px;
+    padding:5px 14px; font-size:11px; font-weight:700; cursor:pointer; font-family:var(--font);
+  }
+  .btn-primary-sm:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
+
+  #xlog-chart { width:100%; height:240px; flex-shrink:0; }
+  .mini-chart { width:100%; height:200px; flex:1; min-height:180px; }
+
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--muted); font-weight:700; padding:8px 10px; border-bottom:1px solid var(--hairline-strong); font-size:11px; white-space:nowrap; cursor:pointer; user-select:none; }
+  th:hover { color:var(--text); }
+  th .arrow { font-size:9px; margin-left:3px; opacity:.5; }
+  th.sorted .arrow { opacity:1; color:var(--primary); }
+  td { padding:8px 10px; border-bottom:1px solid var(--hairline); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px; color:var(--body-c); font-size:12px; }
+  tr:hover td { background:var(--surface-soft); }
+  a.sqlid { color:var(--link-blue); text-decoration:underline; font-family: monospace; font-weight:700; }
+  .empty { color:var(--mute); font-size:13px; padding:14px 0; }
+  .badge-lock { background:var(--error); color:var(--on-primary); padding:2px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+  .copy-btn {
+    background:transparent; border:1px solid var(--hairline); color:var(--muted); border-radius:999px;
+    font-size:10.5px; padding:2px 8px; cursor:pointer; font-family:var(--font); font-weight:700;
+  }
+  .copy-btn:hover { border-color:var(--primary); color:var(--primary); }
+  .copy-btn.copied { border-color:var(--primary); color:var(--primary); background:rgba(74,222,128,.12); }
+  .table-scroll { overflow-x:auto; }
+
+  /* ---- 모달 (드래그 브러시 -> 상세 팝업) ---- */
+  .modal-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center;
+    z-index:100;
+  }
+  .modal-overlay.hidden { display:none; }
+  .modal-box {
+    background:var(--panel); border-radius:var(--radius); width:min(760px, 92vw); max-height:82vh;
+    display:flex; flex-direction:column; border:1px solid var(--panel-border);
+  }
+  .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:var(--surface-dark); }
+  .modal-head h3 { margin:0; color:var(--on-dark); font-size:14px; text-transform:uppercase; letter-spacing:.03em; }
+  .modal-close { background:transparent; border:none; color:var(--on-dark); font-size:22px; cursor:pointer; line-height:1; }
+  .modal-body { padding:16px 20px; overflow-y:auto; }
 </style>
 </head>
 <body>
-<header>
-  <h1>🔶 Oracle DB Monitor</h1>
-  <div style="display:flex; align-items:center; gap:14px;">
-    <nav>
-      <a href="/" class="active">대시보드</a>
-      <a href="#sessions-panel">실행 쿼리</a>
-      <a href="#locks-panel">Lock</a>
-      <a href="#slow-panel">슬로우 쿼리</a>
-    </nav>
-    <span id="conn-badge">연결 중...</span>
+<nav class="sidebar">
+  <div class="brand">◆</div>
+  <a class="navicon active" href="/" title="대시보드">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    <span class="tip">대시보드</span>
+  </a>
+  <a class="navicon" href="#sessions-panel" title="Active Sessions">
+    <svg viewBox="0 0 24 24"><path d="M2 12h4l2-8 4 16 3-11 2 3h5"/></svg>
+    <span class="tip">Active Sessions</span>
+  </a>
+  <a class="navicon" href="#locks-panel" title="Lock">
+    <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="1"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+    <span class="tip">Lock</span>
+  </a>
+  <a class="navicon" href="#slow-panel" title="슬로우 쿼리">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 3.5"/></svg>
+    <span class="tip">슬로우 쿼리</span>
+  </a>
+  <div class="sidebar-bottom">
+    <a class="navicon" href="/detail/sysstat" target="_blank" rel="noopener" title="Select Stat 상세">
+      <svg viewBox="0 0 24 24"><path d="M4 19V10M12 19V5M20 19v-7"/></svg>
+      <span class="tip">Select Stat</span>
+    </a>
   </div>
+</nav>
+
+<header>
+  <div class="htitle">
+    <h1>Oracle DB Monitor</h1>
+    <span class="instance-badge">{{ instance_label }}</span>
+  </div>
+  <span id="conn-badge">연결 중...</span>
 </header>
 
 <main>
+  <!-- MaxGauge 레퍼런스 1행: CPU Memory / SQL Elapsed Time / Alert Log -->
+  <div class="grid3">
+    <div class="panel">
+      <div class="panel-head"><h2>CPU Memory</h2></div>
+      <div class="donut-row">
+        <div class="donut-col">
+          <div class="donut-chart" id="donut-cpu"></div>
+          <div class="donut-sub" id="donut-cpu-sub">User -% · Sys -%</div>
+        </div>
+        <div class="donut-col">
+          <div class="donut-chart" id="donut-mem"></div>
+          <div class="donut-sub" id="donut-mem-sub">Total - · Free -</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>SQL Elapsed Time</h2></div>
+      <div id="scatter-chart"></div>
+      <div class="scatter-hint">차트 위를 드래그(사각 선택)하면 선택 구간의 SQL 목록이 팝업으로 뜹니다.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Alert Log</h2></div>
+      <div class="alert-table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Name</th><th>Value</th><th>Level</th></tr></thead>
+          <tbody id="alert-body"><tr><td colspan="4" class="empty">알림 없음</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 보조 스탯 카드 -->
   <div class="cards">
-    <div class="card card-metric" id="card-cpu">
-      <div class="label">CPU (Host)</div>
-      <div class="value" id="v-cpu">-</div>
-      <div class="gauge"><div class="gauge-fill" id="gauge-cpu"></div></div>
-    </div>
-    <div class="card card-metric" id="card-mem">
-      <div class="label">Memory Used / Total (MB)</div>
-      <div class="value" id="v-mem">-</div>
-      <div class="sub" id="v-mem-pct">-</div>
-      <div class="gauge"><div class="gauge-fill" id="gauge-mem"></div></div>
-    </div>
     <div class="card"><div class="label">Active Sessions</div><div class="value" id="v-sessions">-</div></div>
     <div class="card"><div class="label">SGA / PGA (MB)</div><div class="value" id="v-sgapga">-</div></div>
     <div class="card"><div class="label">Blocking Chains</div><div class="value" id="v-locks">-</div></div>
   </div>
 
+  <!-- Session Logical Reads / Physical Reads -->
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Session Logical Reads (blocks)</h2>
+        <a class="detail-link" href="/detail/sysstat?stat=session+logical+reads" target="_blank" rel="noopener">상세보기 →</a>
+      </div>
+      <div id="logicalreads-chart" class="mini-chart"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Physical Reads (blocks)</h2>
+        <a class="detail-link" href="/detail/sysstat?stat=physical+reads" target="_blank" rel="noopener">상세보기 →</a>
+      </div>
+      <div id="physreads-chart" class="mini-chart"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>24 Hours Trend Comparison</h2>
+      </div>
+      <div class="trend-controls">
+        <select id="trend-stat">
+          {% for val, label in comparable_stats %}
+          <option value="{{ val }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <label><input type="checkbox" id="trend-today" checked> Today</label>
+        <label><input type="checkbox" id="trend-compare" checked> Compare Day</label>
+        <label><input type="checkbox" id="trend-skip-weekend" checked> Skip Weekend</label>
+        <button class="btn-primary-sm" id="trend-retrieve">Retrieve</button>
+      </div>
+      <div id="trend-chart" class="mini-chart"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Long Active Session Count</h2>
+        <a class="detail-link" href="/detail/long-session" target="_blank" rel="noopener">상세보기 →</a>
+      </div>
+      <div id="longsession-chart" class="mini-chart"></div>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="panel-head">
       <h2>X-LOG · CPU% / Active Sessions (실시간)</h2>
-      <a class="detail-link" href="/detail/cpu-mem">상세보기 ↗</a>
+      <a class="detail-link" href="/detail/cpu-mem" target="_blank" rel="noopener">상세보기 →</a>
     </div>
     <div id="xlog-chart"></div>
   </div>
 
-  <div class="block-grid thirds">
+  <div class="grid2">
     <div class="panel">
       <div class="panel-head">
         <h2>Wait Class (실시간, 구간 대기초)</h2>
-        <a class="detail-link" href="/detail/wait-class">상세보기 ↗</a>
+        <a class="detail-link" href="/detail/wait-class" target="_blank" rel="noopener">상세보기 →</a>
       </div>
       <div id="waitclass-chart" class="mini-chart"></div>
     </div>
     <div class="panel">
       <div class="panel-head">
         <h2>CPU 분해 · Sys / User / IO Wait (%)</h2>
-        <a class="detail-link" href="/detail/cpu-breakdown">상세보기 ↗</a>
+        <a class="detail-link" href="/detail/cpu-breakdown" target="_blank" rel="noopener">상세보기 →</a>
       </div>
       <div id="cpubd-chart" class="mini-chart"></div>
     </div>
   </div>
 
   <div class="panel" id="sessions-panel">
-    <div class="panel-head"><h2>실행 중인 쿼리</h2></div>
-    <table>
-      <thead><tr><th>SID</th><th>USER</th><th>EVENT</th><th>ELAPSED(s)</th><th>BLOCKED BY</th><th>SQL_ID</th><th>SQL TEXT</th></tr></thead>
-      <tbody id="sessions-body"><tr><td colspan="7" class="empty">수집 대기 중...</td></tr></tbody>
+    <div class="panel-head"><h2>Active Sessions</h2></div>
+    <div class="table-scroll">
+    <table id="sessions-table">
+      <thead><tr>
+        <th data-key="sid">SID<span class="arrow">▲▼</span></th>
+        <th data-key="username">User<span class="arrow">▲▼</span></th>
+        <th data-key="module">Module<span class="arrow">▲▼</span></th>
+        <th data-key="program">Program<span class="arrow">▲▼</span></th>
+        <th data-key="elapsed_sec">Elapsed(s)<span class="arrow">▲▼</span></th>
+        <th data-key="pga_mb">PGA(MB)<span class="arrow">▲▼</span></th>
+        <th data-key="command_text">Command<span class="arrow">▲▼</span></th>
+        <th data-key="p1">P1<span class="arrow">▲▼</span></th>
+        <th data-key="p2">P2<span class="arrow">▲▼</span></th>
+        <th data-key="p3">P3<span class="arrow">▲▼</span></th>
+        <th data-key="sql_id">SQL_ID<span class="arrow">▲▼</span></th>
+        <th>SQL Text</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="sessions-body"><tr><td colspan="13" class="empty">수집 대기 중...</td></tr></tbody>
     </table>
+    </div>
   </div>
 
   <div class="panel" id="locks-panel">
     <div class="panel-head">
       <h2>Lock / Blocking</h2>
-      <a class="detail-link" href="/detail/lock-waiting">상세보기 ↗</a>
+      <a class="detail-link" href="/detail/lock-waiting" target="_blank" rel="noopener">상세보기 →</a>
     </div>
     <table>
       <thead><tr><th>Blocker SID</th><th>Blocker User</th><th>Waiter SID</th><th>Waiter User</th><th>Wait(s)</th><th>Event</th></tr></thead>
@@ -149,10 +335,26 @@
   </div>
 </main>
 
+<!-- 드래그 브러시 상세 팝업 -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="modal-title">선택한 SQL 실행</h3>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
 <script>
 const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtNum = (n) => n == null ? '-' : Number(n).toLocaleString('en-US');
 
-// 60~70=warn(주황) / 70~80=high(진한주황) / 80~100=crit(레드) / 그 아래는 정상
+// 시간대 표기를 24:00:00 형식으로 통일 (로케일 기본값에 의존하지 않고 직접 포맷팅)
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtTime24(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function fmtDateTime24(d) { return `${pad2(d.getMonth()+1)}/${pad2(d.getDate())} ${fmtTime24(d)}`; }
+
 function levelOf(pct) {
   if (pct === null || pct === undefined) return null;
   if (pct >= 80) return 'lvl-crit';
@@ -160,15 +362,163 @@ function levelOf(pct) {
   if (pct >= 60) return 'lvl-warn';
   return null;
 }
+const LEVEL_COLOR = { 'lvl-warn': '#fb923c', 'lvl-high': '#fbbf24', 'lvl-crit': '#f87171', null: '#4ade80' };
 
-function applyLevel(cardEl, valueEl, gaugeEl, pct) {
-  const lvl = levelOf(pct);
-  ['lvl-warn', 'lvl-high', 'lvl-crit'].forEach(c => { cardEl.classList.remove(c); valueEl.classList.remove(c); gaugeEl.classList.remove(c); });
-  if (lvl) { cardEl.classList.add(lvl); valueEl.classList.add(lvl); gaugeEl.classList.add(lvl); }
-  gaugeEl.style.width = Math.max(0, Math.min(100, pct ?? 0)) + '%';
+const CHART_TEXT = { color: '#8a8a8a', fontSize: 11, fontFamily: 'Inter, sans-serif' };
+const CHART_AXIS_LINE = { lineStyle: { color: '#444444' } };
+const CHART_SPLIT_LINE = { lineStyle: { color: '#2a2a2a' } };
+const CHART_AXIS_LABEL = { color: '#8a8a8a' };
+const CHART_NAME_STYLE = { color: '#8a8a8a' };
+const LINE_W = 3;
+const LINE_W_THIN = 2;
+// 말풍선: 꼬리 끝 (0,0) → 피크에 맞춤, 본체는 위로만 확장
+const BUBBLE_PATH = 'path://M0,0 L8,-9 L26,-9 Q30,-9 30,-13 L30,-30 Q30,-34 26,-34 L-26,-34 Q-30,-34 -30,-30 L-30,-13 Q-30,-9 -26,-9 L-8,-9 Z';
+const BUBBLE_SIZE = [66, 38];
+// 심볼 기본 앵커(바운딩 박스 중심) 대비 꼬리 끝이 아래로 17px → 위로 올려 피크에 꼬리 정렬
+const BUBBLE_TIP_OFFSET_Y = -17;
+const BUBBLE_LABEL_OFFSET_Y = -19;
+
+function bubbleMarkPoint(lineColor, formatter) {
+  return {
+    symbol: BUBBLE_PATH,
+    symbolSize: BUBBLE_SIZE,
+    symbolKeepAspect: true,
+    symbolOffset: [0, BUBBLE_TIP_OFFSET_Y],
+    z: 30,
+    itemStyle: { color: lineColor, borderWidth: 0 },
+    label: {
+      show: true,
+      color: '#ffffff',
+      fontWeight: 'bold',
+      fontSize: 11,
+      fontFamily: 'Inter, sans-serif',
+      lineHeight: 13,
+      align: 'center',
+      verticalAlign: 'middle',
+      offset: [0, BUBBLE_LABEL_OFFSET_Y],
+      formatter: formatter || (p => fmtNum(p.value))
+    },
+    data: [{ type: 'max', name: 'peak' }]
+  };
 }
 
-/* ---------------- X-LOG (CPU% / Active Sessions) — 피크값 + 현재값 라벨 ---------------- */
+/* ================= CPU / Memory 도넛 ================= */
+const donutCpu = echarts.init(document.getElementById('donut-cpu'), null, {renderer:'svg'});
+const donutMem = echarts.init(document.getElementById('donut-mem'), null, {renderer:'svg'});
+
+function renderDonut(chart, pct, label) {
+  const lvl = levelOf(pct);
+  const color = LEVEL_COLOR[lvl];
+  chart.setOption({
+    series: [{
+      type: 'pie', radius: ['62%', '85%'], center: ['50%', '50%'], silent: true,
+      avoidLabelOverlap: false,
+      label: { show: true, position: 'center', formatter: () => (pct ?? '-') + '%\n' + label, fontSize: 14, fontWeight: 700, color: '#e8e8e8', lineHeight: 16 },
+      labelLine: { show: false },
+      data: [
+        { value: pct ?? 0, itemStyle: { color } },
+        { value: Math.max(0, 100 - (pct ?? 0)), itemStyle: { color: '#333333' } }
+      ]
+    }]
+  });
+}
+
+/* ================= SQL Elapsed Time 스캐터 (브러시 드래그 -> 팝업) ================= */
+const scatterChart = echarts.init(document.getElementById('scatter-chart'), null, {renderer:'svg'});
+const MODULE_PALETTE = ['#22d3ee', '#4ade80', '#facc15', '#e879f9', '#a78bfa', '#60a5fa', '#fb923c', '#f87171'];
+function moduleColor(mod) {
+  const s = mod || 'Unknown';
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return MODULE_PALETTE[h % MODULE_PALETTE.length];
+}
+let scatterPoints = []; // [ts_ms, elapsed_sec, sql_id, module, username, sql_text]
+const SCATTER_MAX = 600;
+
+function renderScatter() {
+  scatterChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 46, right: 12, top: 10, bottom: 24 },
+    textStyle: CHART_TEXT,
+    tooltip: { formatter: p => `${fmtTime24(new Date(p.data[0]))}<br/>${esc(p.data[4]||'')}<br/>${esc(p.data[2]||'')} · ${p.data[1]}s<br/>${esc((p.data[5]||'').slice(0,60))}` },
+    // 시계열이 길어질수록 눈금 라벨이 서로 겹쳐 보이던 문제 개선:
+    // 24:00:00 포맷의 짧은 라벨로 통일 + hideOverlap 으로 겹치는 라벨은 자동으로 숨김
+    xAxis: { type: 'time', axisLine: CHART_AXIS_LINE, splitLine: { show:false },
+      axisLabel: { formatter: v => fmtTime24(new Date(v)), hideOverlap: true, color: CHART_AXIS_LABEL.color } },
+    yAxis: { type: 'value', name: 'Elapsed(s)', splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL },
+    brush: { toolbox: ['rect', 'clear'], xAxisIndex: 0, throttleType: 'debounce', throttleDelay: 200 },
+    series: [{
+      type: 'scatter', symbolSize: p => 8 + Math.min(p[1] || 0, 20) / 2,
+      data: scatterPoints,
+      itemStyle: { color: p => moduleColor(p.data[3]), opacity: .75 }
+    }]
+  });
+}
+renderScatter();
+// 기본 인터랙션을 드래그-선택 모드로 켜둔다 (툴바 버튼 클릭 없이 바로 드래그 가능)
+scatterChart.dispatchAction({ type: 'takeGlobalCursor', key: 'brush', brushOption: { brushType: 'rect' } });
+
+scatterChart.on('brushSelected', (params) => {
+  const batch = params.batch && params.batch[0];
+  if (!batch || !batch.selected || !batch.selected[0]) return;
+  const idxs = batch.selected[0].dataIndex;
+  if (!idxs || idxs.length === 0) return;
+  const rows = idxs.map(i => scatterPoints[i]).filter(Boolean);
+  openScatterModal(rows);
+});
+
+function pushScatterPoints(nowMs, sessions) {
+  (sessions || []).forEach(s => {
+    if (s.elapsed_sec === null || s.elapsed_sec === undefined) return;
+    scatterPoints.push([nowMs, s.elapsed_sec, s.sql_id, s.module, s.username, s.sql_text]);
+  });
+  if (scatterPoints.length > SCATTER_MAX) scatterPoints.splice(0, scatterPoints.length - SCATTER_MAX);
+  renderScatter();
+}
+
+function openScatterModal(rows) {
+  document.getElementById('modal-title').textContent = `선택한 SQL 실행 (${rows.length}건)`;
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `
+    <table>
+      <thead><tr><th>User</th><th>Module</th><th>Elapsed(s)</th><th>SQL_ID</th><th>SQL Text</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${esc(r[4])}</td><td>${esc(r[3])}</td><td>${esc(r[1])}</td>
+            <td>${r[2] ? `<a class="sqlid" href="/sql/${esc(r[2])}" target="_blank" rel="noopener">${esc(r[2])}</a>` : '-'}</td>
+            <td title="${esc(r[5])}">${esc((r[5]||'').slice(0,70))}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+document.getElementById('modal-close').addEventListener('click', () => document.getElementById('modal-overlay').classList.add('hidden'));
+document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') e.currentTarget.classList.add('hidden'); });
+
+/* ================= Alert Log ================= */
+function tsToTimeLabel(tsSec) {
+  return fmtDateTime24(new Date(tsSec * 1000));
+}
+let alertRows = [];
+function renderAlerts() {
+  const body = document.getElementById('alert-body');
+  if (alertRows.length === 0) { body.innerHTML = '<tr><td colspan="4" class="empty">알림 없음</td></tr>'; return; }
+  body.innerHTML = alertRows.slice(0, 30).map(a => `
+    <tr>
+      <td>${tsToTimeLabel(a.ts)}</td>
+      <td>${esc(a.name)}</td>
+      <td>${esc(a.value)}</td>
+      <td><span class="alert-level ${esc(a.level)}">${esc(a.level)}</span></td>
+    </tr>`).join('');
+}
+function prependAlerts(rows) {
+  if (!rows || rows.length === 0) return;
+  alertRows = [...rows, ...alertRows];
+  renderAlerts();
+}
+
+/* ================= X-LOG ================= */
 const xlogChart = echarts.init(document.getElementById('xlog-chart'), null, {renderer:'svg'});
 const MAX_POINTS = 120;
 let xlogData = { time: [], cpu: [], sessions: [] };
@@ -176,61 +526,59 @@ let xlogData = { time: [], cpu: [], sessions: [] };
 function renderXlog() {
   xlogChart.setOption({
     backgroundColor: 'transparent',
-    grid: { left: 40, right: 64, top: 24, bottom: 24 },
-    textStyle: { color: '#8b93a3', fontSize: 11 },
+    grid: { left: 8, right: 64, top: 30, bottom: 8, containLabel: true },
+    textStyle: CHART_TEXT,
     tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: xlogData.time, axisLine:{lineStyle:{color:'#262c35'}} },
+    xAxis: { type: 'category', data: xlogData.time, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL },
     yAxis: [
-      { type:'value', name:'CPU %', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
-      { type:'value', name:'Sessions', splitLine:{show:false} }
+      { type:'value', name:'CPU %', max:100, splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL },
+      { type:'value', name:'Sessions', splitLine:{show:false}, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL }
     ],
     series: [
       {
-        name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:true,
-        lineStyle:{color:'#4c8dff'}, yAxisIndex:0,
-        endLabel: { show:true, formatter: p => (p.value ?? '-') + '%', color:'#4c8dff', fontSize:11 },
-        markPoint: { symbolSize:44, label:{fontSize:10}, data:[{type:'max', name:'peak'}] }
+        name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:false,
+        lineStyle:{color:'#4ade80', width:LINE_W}, yAxisIndex:0,
+        markPoint: bubbleMarkPoint('#4ade80', p => (p.value ?? '-') + '%')
       },
       {
-        name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:true,
-        lineStyle:{color:'#3ddc84'}, yAxisIndex:1,
-        endLabel: { show:true, formatter: p => 'sess ' + (p.value ?? '-'), color:'#3ddc84', fontSize:11 }
+        name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:false,
+        lineStyle:{color:'#22d3ee', width:LINE_W}, yAxisIndex:1,
+        markPoint: bubbleMarkPoint('#22d3ee', p => fmtNum(p.value))
       }
     ]
   });
 }
 renderXlog();
-window.addEventListener('resize', () => { xlogChart.resize(); waitClassChart.resize(); cpuBdChart.resize(); });
 
 function pushXlogPoint(ts, cpu, sessions) {
-  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  const label = fmtTime24(new Date(ts * 1000));
   xlogData.time.push(label); xlogData.cpu.push(cpu); xlogData.sessions.push(sessions);
   if (xlogData.time.length > MAX_POINTS) { xlogData.time.shift(); xlogData.cpu.shift(); xlogData.sessions.shift(); }
   renderXlog();
 }
 
-/* ---------------- Wait Class 미니 차트 (스택 영역) ---------------- */
+/* ================= Wait Class ================= */
 const waitClassChart = echarts.init(document.getElementById('waitclass-chart'), null, {renderer:'svg'});
 const WC_COLORS = {
-  'User I/O':'#4c8dff', 'System I/O':'#3ddc84', 'Concurrency':'#f5a524', 'Application':'#f5455c',
-  'Commit':'#a78bfa', 'Network':'#22d3ee', 'Configuration':'#94a3b8', 'Administrative':'#eab308',
-  'Scheduler':'#fb7185', 'Cluster':'#34d399', 'Queueing':'#fbbf24', 'Other':'#64748b'
+  'User I/O':'#22d3ee', 'System I/O':'#60a5fa', 'Concurrency':'#facc15', 'Application':'#f87171',
+  'Commit':'#4ade80', 'Network':'#e879f9', 'Configuration':'#8a8a8a', 'Administrative':'#fb923c',
+  'Scheduler':'#a78bfa', 'Cluster':'#bef264', 'Queueing':'#6b7280', 'Other':'#4b5563'
 };
 let waitClassTime = [];
-let waitClassSeries = {}; // class -> array
+let waitClassSeries = {};
 
 function renderWaitClass() {
   const series = Object.keys(waitClassSeries).map(cls => ({
-    name: cls, type: 'line', stack: 'wc', areaStyle: { opacity: .55 }, showSymbol:false,
-    data: waitClassSeries[cls], lineStyle:{width:1, color: WC_COLORS[cls] || '#64748b'}, itemStyle:{color: WC_COLORS[cls] || '#64748b'}
+    name: cls, type: 'line', stack: 'wc', areaStyle: { opacity: .6 }, showSymbol:false,
+    data: waitClassSeries[cls], lineStyle:{width:LINE_W_THIN, color: WC_COLORS[cls] || '#6b7280'}, itemStyle:{color: WC_COLORS[cls] || '#6b7280'}
   }));
   waitClassChart.setOption({
     backgroundColor:'transparent',
-    grid:{left:36, right:12, top:10, bottom:20},
-    textStyle:{color:'#8b93a3', fontSize:10},
+    grid:{left:8, right:8, top:10, bottom:8, containLabel:true},
+    textStyle: CHART_TEXT,
     tooltip:{trigger:'axis'},
-    xAxis:{type:'category', data: waitClassTime, axisLine:{lineStyle:{color:'#262c35'}}},
-    yAxis:{type:'value', name:'sec', splitLine:{lineStyle:{color:'#1d222a'}}},
+    xAxis:{type:'category', data: waitClassTime, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL},
+    yAxis:{type:'value', name:'sec', splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL},
     series
   });
 }
@@ -238,7 +586,7 @@ renderWaitClass();
 
 function pushWaitClass(ts, rows) {
   if (!rows || rows.length === 0) return;
-  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  const label = fmtTime24(new Date(ts * 1000));
   waitClassTime.push(label);
   const seen = new Set();
   rows.forEach(r => {
@@ -246,10 +594,7 @@ function pushWaitClass(ts, rows) {
     if (!waitClassSeries[r.wait_class]) waitClassSeries[r.wait_class] = waitClassTime.map(() => 0);
     waitClassSeries[r.wait_class].push(r.wait_sec ?? 0);
   });
-  // 이번 틱에 안 나온 클래스는 0으로 채움 (길이 동기화)
-  Object.keys(waitClassSeries).forEach(cls => {
-    if (!seen.has(cls)) waitClassSeries[cls].push(0);
-  });
+  Object.keys(waitClassSeries).forEach(cls => { if (!seen.has(cls)) waitClassSeries[cls].push(0); });
   if (waitClassTime.length > MAX_POINTS) {
     waitClassTime.shift();
     Object.keys(waitClassSeries).forEach(cls => waitClassSeries[cls].shift());
@@ -257,22 +602,22 @@ function pushWaitClass(ts, rows) {
   renderWaitClass();
 }
 
-/* ---------------- CPU 분해 미니 차트 (Sys/User/IOWait 스택 영역) ---------------- */
+/* ================= CPU 분해 ================= */
 const cpuBdChart = echarts.init(document.getElementById('cpubd-chart'), null, {renderer:'svg'});
 let cpuBdTime = [], cpuBdUser = [], cpuBdSys = [], cpuBdIowait = [];
 
 function renderCpuBd() {
   cpuBdChart.setOption({
     backgroundColor:'transparent',
-    grid:{left:36, right:12, top:10, bottom:20},
-    textStyle:{color:'#8b93a3', fontSize:10},
+    grid:{left:8, right:8, top:10, bottom:8, containLabel:true},
+    textStyle: CHART_TEXT,
     tooltip:{trigger:'axis'},
-    xAxis:{type:'category', data: cpuBdTime, axisLine:{lineStyle:{color:'#262c35'}}},
-    yAxis:{type:'value', name:'%', max:100, splitLine:{lineStyle:{color:'#1d222a'}}},
+    xAxis:{type:'category', data: cpuBdTime, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL},
+    yAxis:{type:'value', name:'%', max:100, splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL},
     series:[
-      {name:'User', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdUser, lineStyle:{width:1,color:'#f5455c'}, itemStyle:{color:'#f5455c'}},
-      {name:'Sys', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdSys, lineStyle:{width:1,color:'#4c8dff'}, itemStyle:{color:'#4c8dff'}},
-      {name:'IO Wait', type:'line', stack:'cpu', areaStyle:{opacity:.55}, showSymbol:false, data:cpuBdIowait, lineStyle:{width:1,color:'#f5a524'}, itemStyle:{color:'#f5a524'}}
+      {name:'User', type:'line', stack:'cpu', areaStyle:{opacity:.6}, showSymbol:false, data:cpuBdUser, lineStyle:{width:LINE_W_THIN,color:'#f87171'}, itemStyle:{color:'#f87171'}},
+      {name:'Sys', type:'line', stack:'cpu', areaStyle:{opacity:.6}, showSymbol:false, data:cpuBdSys, lineStyle:{width:LINE_W_THIN,color:'#4ade80'}, itemStyle:{color:'#4ade80'}},
+      {name:'IO Wait', type:'line', stack:'cpu', areaStyle:{opacity:.6}, showSymbol:false, data:cpuBdIowait, lineStyle:{width:LINE_W_THIN,color:'#fb923c'}, itemStyle:{color:'#fb923c'}}
     ]
   });
 }
@@ -280,31 +625,148 @@ renderCpuBd();
 
 function pushCpuBd(ts, bd) {
   if (!bd) return;
-  const label = new Date(ts * 1000).toLocaleTimeString('ko-KR', {hour12:false});
+  const label = fmtTime24(new Date(ts * 1000));
   cpuBdTime.push(label);
-  cpuBdUser.push(bd.user_pct ?? 0);
-  cpuBdSys.push(bd.sys_pct ?? 0);
-  cpuBdIowait.push(bd.iowait_pct ?? 0);
+  cpuBdUser.push(bd.user_pct ?? 0); cpuBdSys.push(bd.sys_pct ?? 0); cpuBdIowait.push(bd.iowait_pct ?? 0);
   if (cpuBdTime.length > MAX_POINTS) { cpuBdTime.shift(); cpuBdUser.shift(); cpuBdSys.shift(); cpuBdIowait.shift(); }
   renderCpuBd();
 }
 
-/* ---------------- 카드 / 테이블 렌더 ---------------- */
+/* ================= Session Logical Reads / Physical Reads (실시간) ================= */
+const logicalChart = echarts.init(document.getElementById('logicalreads-chart'), null, {renderer:'svg'});
+const physChart = echarts.init(document.getElementById('physreads-chart'), null, {renderer:'svg'});
+let logicalTime = [], logicalVal = [];
+let physTime = [], physVal = [];
+
+function renderRateChart(chart, xs, ys, color) {
+  chart.setOption({
+    backgroundColor:'transparent',
+    grid:{left:54, right:12, top:16, bottom:8, containLabel:true},
+    textStyle: CHART_TEXT,
+    tooltip:{trigger:'axis', valueFormatter: v => fmtNum(v)},
+    xAxis:{type:'category', data: xs, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL},
+    yAxis:{type:'value', splitLine: CHART_SPLIT_LINE, axisLabel:{...CHART_AXIS_LABEL, formatter: v => fmtNum(v)}, nameTextStyle: CHART_NAME_STYLE},
+    series:[{
+      type:'line', data: ys, showSymbol:false, lineStyle:{color, width:LINE_W},
+      markPoint: bubbleMarkPoint(color)
+    }]
+  });
+}
+
+function pushRate(ts, sysstatLive) {
+  if (!sysstatLive) return;
+  const label = fmtTime24(new Date(ts * 1000));
+  const logical = sysstatLive['session logical reads'];
+  const phys = sysstatLive['physical reads'];
+  if (logical) {
+    logicalTime.push(label); logicalVal.push(logical.delta_value ?? 0);
+    if (logicalTime.length > MAX_POINTS) { logicalTime.shift(); logicalVal.shift(); }
+    renderRateChart(logicalChart, logicalTime, logicalVal, '#4ade80');
+  }
+  if (phys) {
+    physTime.push(label); physVal.push(phys.delta_value ?? 0);
+    if (physTime.length > MAX_POINTS) { physTime.shift(); physVal.shift(); }
+    renderRateChart(physChart, physTime, physVal, '#a78bfa');
+  }
+}
+
+/* ================= Long Active Session Count (시간대별 구간 스택) ================= */
+const longSessionChart = echarts.init(document.getElementById('longsession-chart'), null, {renderer:'svg'});
+let lsTime = [], lsLt3 = [], lsLt10 = [], lsLt15 = [], lsGe15 = [];
+
+function renderLongSession() {
+  longSessionChart.setOption({
+    backgroundColor:'transparent',
+    grid:{left:8, right:8, top:26, bottom:8, containLabel:true},
+    textStyle: CHART_TEXT,
+    tooltip:{trigger:'axis'},
+    legend:{top:0, textStyle:{color:'#8a8a8a', fontSize:10}, icon:'circle', data:['<3s','<10s','<15s','≥15s']},
+    xAxis:{type:'category', data: lsTime, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL},
+    yAxis:{type:'value', splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL},
+    series:[
+      {name:'<3s', type:'bar', stack:'ls', data:lsLt3, itemStyle:{color:'#4ade80'}},
+      {name:'<10s', type:'bar', stack:'ls', data:lsLt10, itemStyle:{color:'#22d3ee'}},
+      {name:'<15s', type:'bar', stack:'ls', data:lsLt15, itemStyle:{color:'#facc15'}},
+      {name:'≥15s', type:'bar', stack:'ls', data:lsGe15, itemStyle:{color:'#f87171'}}
+    ]
+  });
+}
+renderLongSession();
+
+function pushLongSession(ts, data) {
+  if (!data) return;
+  const label = fmtTime24(new Date(ts * 1000));
+  lsTime.push(label);
+  lsLt3.push(data.cnt_lt3 ?? 0); lsLt10.push(data.cnt_lt10 ?? 0);
+  lsLt15.push(data.cnt_lt15 ?? 0); lsGe15.push(data.cnt_ge15 ?? 0);
+  if (lsTime.length > MAX_POINTS) { lsTime.shift(); lsLt3.shift(); lsLt10.shift(); lsLt15.shift(); lsGe15.shift(); }
+  renderLongSession();
+}
+
+/* ================= 24 Hours Trend Comparison ================= */
+const trendChart = echarts.init(document.getElementById('trend-chart'), null, {renderer:'svg'});
+
+function todLabel(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
+}
+
+async function fetchTrendComparison() {
+  const stat = document.getElementById('trend-stat').value;
+  const skipWeekend = document.getElementById('trend-skip-weekend').checked;
+  const showToday = document.getElementById('trend-today').checked;
+  const showCompare = document.getElementById('trend-compare').checked;
+  const res = await fetch(`/api/trend-comparison?stat=${encodeURIComponent(stat)}&skip_weekend=${skipWeekend}`);
+  const data = await res.json();
+
+  const series = [];
+  if (showToday) {
+    series.push({
+      name: 'Today', type: 'line', showSymbol: false,
+      data: data.today.map(p => [p.tod_sec, p.value]),
+      lineStyle: { color: '#4ade80', width: LINE_W },
+      markPoint: bubbleMarkPoint('#4ade80')
+    });
+  }
+  if (showCompare) {
+    series.push({
+      name: `Compare (${data.compare_date || ''})`, type: 'line', showSymbol: false,
+      data: data.compare.map(p => [p.tod_sec, p.value]),
+      lineStyle: { color: '#22d3ee', width: LINE_W, type: 'dashed' },
+      markPoint: bubbleMarkPoint('#22d3ee')
+    });
+  }
+
+  trendChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 50, right: 12, top: 30, bottom: 8, containLabel: true },
+    textStyle: CHART_TEXT,
+    tooltip: { trigger: 'axis', valueFormatter: v => fmtNum(v) },
+    legend: { top: 0, textStyle: { color: '#8a8a8a', fontSize: 10 }, icon: 'circle' },
+    xAxis: { type: 'value', min: 0, max: 24 * 3600, axisLine: CHART_AXIS_LINE, axisLabel: { formatter: v => todLabel(v), hideOverlap: true, color: CHART_AXIS_LABEL.color } },
+    yAxis: { type: 'value', splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL },
+    series
+  }, true);
+}
+document.getElementById('trend-retrieve').addEventListener('click', fetchTrendComparison);
+fetchTrendComparison();
+
+window.addEventListener('resize', () => {
+  [donutCpu, donutMem, scatterChart, xlogChart, waitClassChart, cpuBdChart, logicalChart, physChart, trendChart, longSessionChart].forEach(c => c.resize());
+});
+
+/* ================= 카드 / 테이블 렌더 ================= */
 function renderOverview(o) {
   if (!o || o.cpu_pct === undefined) return;
-  const cpuCard = document.getElementById('card-cpu');
-  const cpuVal = document.getElementById('v-cpu');
-  const cpuGauge = document.getElementById('gauge-cpu');
-  cpuVal.textContent = (o.cpu_pct ?? '-') + ' %';
-  applyLevel(cpuCard, cpuVal, cpuGauge, o.cpu_pct);
-
-  const memCard = document.getElementById('card-mem');
-  const memVal = document.getElementById('v-mem');
-  const memGauge = document.getElementById('gauge-mem');
-  const memPct = (o.mem_total_mb ? (o.mem_used_mb / o.mem_total_mb * 100) : 0);
-  memVal.textContent = `${Math.round(o.mem_used_mb)} / ${Math.round(o.mem_total_mb)}`;
-  document.getElementById('v-mem-pct').textContent = memPct.toFixed(1) + ' %';
-  applyLevel(memCard, memVal, memGauge, memPct);
+  renderDonut(donutCpu, o.cpu_pct, 'CPU');
+  const memPct = o.mem_total_mb ? Math.round(o.mem_used_mb / o.mem_total_mb * 100) : 0;
+  renderDonut(donutMem, memPct, 'Memory');
+  document.getElementById('donut-cpu-sub').innerHTML = lastCpuBreakdown
+    ? `User <b>${lastCpuBreakdown.user_pct ?? '-'}%</b> · Sys <b>${lastCpuBreakdown.sys_pct ?? '-'}%</b>` : 'User -% · Sys -%';
+  document.getElementById('donut-mem-sub').innerHTML =
+    `Total <b>${(o.mem_total_mb/1024).toFixed(1)}G</b> · Free <b>${o.mem_free_mb != null ? o.mem_free_mb.toFixed(1)+'M' : '-'}</b>`;
 
   document.getElementById('v-sessions').textContent = o.active_sessions ?? '-';
   document.getElementById('v-sgapga').textContent = `${Math.round(o.sga_total_mb)} / ${Math.round(o.pga_allocated_mb)}`;
@@ -312,18 +774,78 @@ function renderOverview(o) {
   const nowTs = Math.floor(Date.now()/1000);
   pushXlogPoint(nowTs, o.cpu_pct ?? 0, o.active_sessions ?? 0);
 }
+let lastCpuBreakdown = null;
+
+/* ---- Active Sessions: 정렬 가능 + 복사버튼 ---- */
+let lastSessions = [];
+let sessionSort = { key: null, dir: 'asc' };
+
+function sortRows(rows, key, dir) {
+  if (!key) return rows;
+  const copy = [...rows];
+  copy.sort((a, b) => {
+    let av = a[key], bv = b[key];
+    if (av === null || av === undefined) av = '';
+    if (bv === null || bv === undefined) bv = '';
+    const an = parseFloat(av), bn = parseFloat(bv);
+    let cmp;
+    if (!isNaN(an) && !isNaN(bn) && av !== '' && bv !== '') cmp = an - bn;
+    else cmp = String(av).localeCompare(String(bv));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+  return copy;
+}
 
 function renderSessions(rows) {
+  lastSessions = rows || [];
   const body = document.getElementById('sessions-body');
-  if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="7" class="empty">현재 실행 중인 쿼리 없음</td></tr>'; return; }
-  body.innerHTML = rows.map(r => `
+  const sorted = sortRows(lastSessions, sessionSort.key, sessionSort.dir);
+  if (sorted.length === 0) { body.innerHTML = '<tr><td colspan="13" class="empty">현재 실행 중인 쿼리 없음</td></tr>'; return; }
+  body.innerHTML = sorted.map((r, i) => `
     <tr>
-      <td>${esc(r.sid)}</td><td>${esc(r.username)}</td><td>${esc(r.event)}</td>
-      <td>${esc(r.elapsed_sec)}</td><td>${r.blocking_session ? '<span class="badge-lock">SID ' + esc(r.blocking_session) + '</span>' : '-'}</td>
-      <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}">${esc(r.sql_id)}</a>` : '-'}</td>
-      <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,80))}</td>
+      <td>${esc(r.sid)}</td><td>${esc(r.username)}</td><td>${esc(r.module)}</td><td title="${esc(r.program)}">${esc((r.program||'').split(/[\\\/]/).pop())}</td>
+      <td>${esc(r.elapsed_sec)}</td><td>${esc(r.pga_mb)}</td><td>${esc(r.command_text)}</td>
+      <td>${esc(r.p1)}</td><td>${esc(r.p2)}</td><td>${esc(r.p3)}</td>
+      <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a>` : '-'}</td>
+      <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,60))}</td>
+      <td><button class="copy-btn" data-idx="${i}">복사</button></td>
     </tr>`).join('');
+  body.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = sorted[Number(btn.dataset.idx)];
+      copyToClipboard(row.sql_text || '', btn);
+    });
+  });
 }
+
+function copyToClipboard(text, btnEl) {
+  const done = () => {
+    if (!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = '복사됨'; btnEl.classList.add('copied');
+    setTimeout(() => { btnEl.textContent = orig; btnEl.classList.remove('copied'); }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(done);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    done();
+  }
+}
+
+document.querySelectorAll('#sessions-table thead th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    sessionSort.dir = (sessionSort.key === key && sessionSort.dir === 'asc') ? 'desc' : 'asc';
+    sessionSort.key = key;
+    document.querySelectorAll('#sessions-table thead th').forEach(h => h.classList.remove('sorted'));
+    th.classList.add('sorted');
+    renderSessions(lastSessions);
+  });
+});
 
 function renderLocks(rows) {
   const body = document.getElementById('locks-body');
@@ -342,7 +864,7 @@ function renderSlow(rows) {
   if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="6" class="empty">임계치 초과 쿼리 없음</td></tr>'; return; }
   body.innerHTML = rows.map(r => `
     <tr>
-      <td><a class="sqlid" href="/sql/${esc(r.sql_id)}">${esc(r.sql_id)}</a></td>
+      <td><a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a></td>
       <td>${esc(r.parsing_schema_name)}</td><td>${esc(r.executions)}</td>
       <td>${esc(r.avg_elapsed_sec)}</td><td>${esc(r.avg_buffer_gets)}</td>
       <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,80))}</td>
@@ -350,6 +872,7 @@ function renderSlow(rows) {
 }
 
 function applyUpdate(msg) {
+  if (msg.cpu_breakdown) lastCpuBreakdown = msg.cpu_breakdown;
   renderOverview(msg.overview);
   renderSessions(msg.sessions);
   renderLocks(msg.locks);
@@ -357,9 +880,13 @@ function applyUpdate(msg) {
   const nowTs = Math.floor(Date.now()/1000);
   if (msg.wait_class && msg.wait_class.length) pushWaitClass(nowTs, msg.wait_class);
   if (msg.cpu_breakdown) pushCpuBd(nowTs, msg.cpu_breakdown);
+  if (msg.sysstat_live) pushRate(nowTs, msg.sysstat_live);
+  pushScatterPoints(Date.now(), msg.sessions);
+  if (msg.long_session_counts) pushLongSession(nowTs, msg.long_session_counts);
+  if (msg.alerts && msg.alerts.length) prependAlerts(msg.alerts);
 }
 
-// --- WebSocket 연결 (재연결 포함) ---
+/* ---- WebSocket ---- */
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
@@ -371,10 +898,11 @@ function connectWS() {
 }
 connectWS();
 
-// 초기 히스토리 로드 (새로고침 시 X-log 그래프가 비어있지 않도록)
+/* ---- 초기 로드 ---- */
 fetch('/api/xlog?minutes=30').then(r => r.json()).then(rows => {
   rows.forEach(r => pushXlogPoint(r.ts, r.cpu_pct, r.active_sessions));
 });
+fetch('/api/alerts?limit=30').then(r => r.json()).then(rows => { alertRows = rows; renderAlerts(); });
 </script>
 </body>
 </html>

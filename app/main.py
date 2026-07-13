@@ -6,6 +6,7 @@ FastAPI 엔트리포인트.
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
@@ -50,8 +51,19 @@ async def on_shutdown():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    comparable_stats = [
+        ("cpu_pct", "CPU %"),
+        ("active_sessions", "Active Sessions"),
+        ("mem_used_mb", "Memory Used (MB)"),
+    ] + [(name, name) for name in queries.TRACKED_SYSSTAT_NAMES]
     return templates.TemplateResponse(
-        "dashboard.html", {"request": request, "poll_interval": settings.poll_interval_sec}
+        "dashboard.html",
+        {
+            "request": request,
+            "poll_interval": settings.poll_interval_sec,
+            "instance_label": settings.instance_label,
+            "comparable_stats": comparable_stats,
+        },
     )
 
 
@@ -75,6 +87,7 @@ DETAIL_METRICS = {
     "cpu-breakdown": "CPU (Sys/User/IO Wait)",
     "sysstat": "Select Stat (IO/Exec/Redo 포함)",
     "total-sessions": "Total Sessions",
+    "long-session": "Long Active Session Count",
 }
 
 
@@ -121,6 +134,12 @@ async def api_xlog(minutes: int = 30):
     return await asyncio.to_thread(sqlite_store.get_xlog, minutes)
 
 
+@app.get("/api/alerts")
+async def api_alerts(limit: int = 50):
+    """Alert Log 패널 초기 로딩용 (이후는 WebSocket으로 신규 건만 push 된다)."""
+    return await asyncio.to_thread(sqlite_store.get_recent_alerts, limit)
+
+
 @app.get("/api/sysstat-names")
 async def api_sysstat_names():
     """'Select Stat' 드롭다운용 - V$SYSSTAT 전체 지표명 + 실제 추적 중인 목록."""
@@ -158,7 +177,35 @@ async def api_detail(metric: str, start: int, end: int, stat: Optional[str] = No
         buckets = await asyncio.to_thread(sqlite_store.get_session_count_range, start, end)
         return {"buckets": buckets}
 
+    if metric == "long-session":
+        buckets = await asyncio.to_thread(sqlite_store.get_long_session_range, start, end)
+        return {"buckets": buckets}
+
     return {"error": f"unknown metric: {metric}"}
+
+
+@app.get("/api/trend-comparison")
+async def api_trend_comparison(stat: str = "cpu_pct", skip_weekend: bool = True):
+    """24 Hours Trend Comparison - 오늘(자정~현재) vs 전 영업일(또는 단순 어제) 같은 시간대 겹쳐보기.
+    skip_weekend=True 면 비교일이 토/일이면 직전 평일까지 거슬러 올라간다."""
+    now = datetime.now()
+    today_start_dt = datetime(now.year, now.month, now.day)
+    today_start = int(today_start_dt.timestamp())
+    today_end = int(now.timestamp())
+    elapsed_today = today_end - today_start
+
+    compare_day = today_start_dt - timedelta(days=1)
+    if skip_weekend:
+        while compare_day.weekday() >= 5:  # 5=Sat, 6=Sun
+            compare_day -= timedelta(days=1)
+    compare_start = int(compare_day.timestamp())
+    compare_end = compare_start + elapsed_today
+
+    data = await asyncio.to_thread(
+        sqlite_store.get_trend_comparison, stat, today_start, today_end, compare_start, compare_end
+    )
+    data["compare_date"] = compare_day.strftime("%Y-%m-%d")
+    return data
 
 
 # ---------------------------------------------------------------------------

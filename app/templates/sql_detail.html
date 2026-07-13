@@ -3,27 +3,58 @@
 <head>
 <meta charset="UTF-8">
 <title>SQL 상세 · {{ sql_id }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0f1216; --panel:#171b21; --border:#262c35; --text:#e6e9ef; --muted:#8b93a3; --accent:#4c8dff; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,"Malgun Gothic",sans-serif; }
-  header { padding:14px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; }
-  header a { color:var(--muted); text-decoration:none; font-size:13px; }
-  header h1 { font-size:15px; margin:0; font-family:monospace; }
-  main { padding: 18px 22px; max-width: 1000px; }
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:18px; }
-  .panel h2 { font-size:13px; color:var(--muted); margin:0 0 10px 0; text-transform:uppercase; letter-spacing:.03em; }
-  pre { white-space:pre-wrap; word-break:break-word; font-size:13px; background:#0d1013; padding:12px; border-radius:6px; border:1px solid var(--border); }
-  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
-  .stat .label { font-size:11px; color:var(--muted); }
-  .stat .value { font-size:18px; font-weight:600; margin-top:4px; }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th { text-align:left; color:var(--muted); font-weight:500; padding:5px 8px; border-bottom:1px solid var(--border); }
-  td { padding:5px 8px; border-bottom:1px solid #1d222a; font-family:monospace; }
+  :root {
+    --bg: #121212; --panel: #1e1e1e; --panel-border: #2a2a2a;
+    --text: #e8e8e8; --body-c: #d0d0d0; --muted: #8a8a8a;
+    --hairline: #333333; --hairline-strong: #444444; --surface-soft: #252525;
+    --surface-dark: #0d0d0d; --on-dark: #ffffff; --on-primary: #0a0a0a;
+    --primary: #4ade80; --primary-dark: #22c55e;
+    --radius: 4px; --gap-sm: 12px; --gap-md: 20px; --gap-lg: 24px;
+    --font: 'Inter', Arial, Helvetica, sans-serif;
+    --ink: var(--text); --canvas: var(--panel);
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); }
+  header { display:flex; align-items:center; gap:var(--gap-sm); padding:0 var(--gap-lg); height:48px; background:var(--surface-dark); border-bottom:1px solid var(--panel-border); }
+  header a.back {
+    color:var(--on-dark); text-decoration:none; font-size:12px; font-weight:700;
+    border:1px solid var(--hairline-strong); border-radius:999px; padding:5px 14px;
+  }
+  header a.back:hover { background:var(--primary); color:var(--on-primary); border-color:var(--primary); }
+  header h1 { font-size:14px; margin:0; font-weight:700; font-family:monospace; color:var(--on-dark); }
+  main { padding:var(--gap-lg); padding-bottom:48px; max-width:1040px; margin:0 auto; display:flex; flex-direction:column; gap:var(--gap-md); }
+  .panel { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:var(--gap-md); }
+  .panel h2 { font-size:12px; color:var(--body-c); margin:0 0 var(--gap-sm) 0; letter-spacing:.02em; font-weight:700; }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:12px; background:var(--surface-soft); padding:var(--gap-sm); border-radius:var(--radius); border:1px solid var(--hairline); line-height:1.6; color:var(--body-c); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:var(--gap-sm); }
+  .stat .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; font-weight:700; }
+  .stat .value { font-size:20px; font-weight:700; margin-top:6px; color:var(--text); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:700; padding:9px 8px; border-bottom:1px solid var(--hairline-strong); text-transform:uppercase; font-size:11px; letter-spacing:.03em; cursor:pointer; user-select:none; }
+  th:hover { color:var(--text); }
+  th .arrow { font-size:9px; margin-left:3px; opacity:.5; }
+  th.sorted .arrow { opacity:1; color:var(--primary); }
+  td { padding:9px 8px; border-bottom:1px solid var(--hairline); font-family:monospace; color:var(--body-c); }
+  .op-cell { display:flex; align-items:center; gap:6px; }
+  .op-indent { display:inline-flex; flex-shrink:0; }
+  .op-indent .branch { width:14px; height:14px; border-left:1px solid var(--hairline-strong); border-bottom:1px solid var(--hairline-strong); margin-top:-9px; }
+  .op-depth0 { font-weight:700; }
+  .panel-head-row { display:flex; justify-content:space-between; align-items:center; margin:0 0 14px 8px; }
+  .panel-head-row h2 { margin:0; }
+  .copy-btn {
+    background:transparent; border:1px solid var(--hairline); color:var(--muted); border-radius:999px;
+    font-size:11px; padding:5px 12px; cursor:pointer; font-family:var(--font); font-weight:700; text-transform:uppercase;
+  }
+  .copy-btn:hover { border-color:var(--primary); color:var(--primary); }
+  .copy-btn.copied { border-color:var(--primary); color:var(--primary); background:rgba(74,222,128,.12); }
 </style>
 </head>
 <body>
 <header>
-  <a href="/">&larr; 대시보드로</a>
+  <a class="back" href="/">← 대시보드로</a>
   <h1>SQL_ID: {{ sql_id }}</h1>
 </header>
 <main>
@@ -44,22 +75,36 @@
   </div>
 
   <div class="panel">
-    <h2>SQL 전문</h2>
-    <pre>{{ detail.sql_fulltext }}</pre>
+    <div class="panel-head-row">
+      <h2>SQL 전문</h2>
+      <button class="copy-btn" id="copy-sql-btn">복사</button>
+    </div>
+    <pre id="sql-fulltext">{{ detail.sql_fulltext }}</pre>
   </div>
 
   <div class="panel">
-    <h2>실행 계획</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Operation</th><th>Object</th><th>Cost</th><th>Cardinality</th></tr></thead>
+    <h2>실행 계획 (헤더 클릭으로 정렬)</h2>
+    <table id="plan-table">
+      <thead><tr>
+        <th data-key="id" data-type="num">ID<span class="arrow">▲▼</span></th>
+        <th data-key="op" data-type="str">Operation<span class="arrow">▲▼</span></th>
+        <th data-key="obj" data-type="str">Object<span class="arrow">▲▼</span></th>
+        <th data-key="cost" data-type="num">Cost<span class="arrow">▲▼</span></th>
+        <th data-key="card" data-type="num">Cardinality<span class="arrow">▲▼</span></th>
+      </tr></thead>
       <tbody>
         {% for p in detail.plan %}
         <tr>
-          <td>{{ p.id }}</td>
-          <td>{{ p.indented_op }} {{ p.options or '' }}</td>
-          <td>{{ p.object_name or '' }}</td>
-          <td>{{ p.cost if p.cost is not none else '-' }}</td>
-          <td>{{ p.cardinality if p.cardinality is not none else '-' }}</td>
+          <td data-sort="{{ p.id }}">{{ p.id }}</td>
+          <td data-sort="{{ p.indented_op }} {{ p.options or '' }}">
+            <div class="op-cell" style="padding-left: {{ p.depth * 18 }}px;">
+              {% if p.depth > 0 %}<span class="op-indent"><span class="branch"></span></span>{% endif %}
+              <span class="{{ 'op-depth0' if p.depth == 0 else '' }}">{{ p.operation }}{{ ' ' + p.options if p.options else '' }}</span>
+            </div>
+          </td>
+          <td data-sort="{{ p.object_name or '' }}">{{ p.object_name or '' }}</td>
+          <td data-sort="{{ p.cost if p.cost is not none else -1 }}">{{ p.cost if p.cost is not none else '-' }}</td>
+          <td data-sort="{{ p.cardinality if p.cardinality is not none else -1 }}">{{ p.cardinality if p.cardinality is not none else '-' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -67,5 +112,54 @@
   </div>
   {% endif %}
 </main>
+<script>
+(function() {
+  const copyBtn = document.getElementById('copy-sql-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const text = document.getElementById('sql-fulltext').textContent;
+      const done = () => {
+        const orig = copyBtn.textContent;
+        copyBtn.textContent = '복사됨'; copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = orig; copyBtn.classList.remove('copied'); }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(done);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+        done();
+      }
+    });
+  }
+
+  const table = document.getElementById('plan-table');
+  if (table) {
+    const headers = table.querySelectorAll('thead th[data-key]');
+    headers.forEach((th, idx) => {
+      th.dataset.dir = '';
+      th.addEventListener('click', () => {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        headers.forEach(h => { h.dataset.dir = ''; h.classList.remove('sorted'); });
+        th.dataset.dir = dir; th.classList.add('sorted');
+        const isNum = th.dataset.type === 'num';
+        rows.sort((a, b) => {
+          const av = a.children[idx].dataset.sort ?? a.children[idx].textContent.trim();
+          const bv = b.children[idx].dataset.sort ?? b.children[idx].textContent.trim();
+          let cmp;
+          if (isNum) cmp = parseFloat(av) - parseFloat(bv);
+          else cmp = String(av).localeCompare(String(bv));
+          return dir === 'asc' ? cmp : -cmp;
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  }
+})();
+</script>
 </body>
 </html>

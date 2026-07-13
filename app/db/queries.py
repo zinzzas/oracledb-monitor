@@ -15,6 +15,8 @@ V$ 동적 성능 뷰 조회 모음.
     GRANT SELECT ON V_$PGASTAT       TO monitor_user;
     GRANT SELECT ON V_$SYSTEM_EVENT  TO monitor_user;
     GRANT SELECT ON V_$SYSSTAT       TO monitor_user;
+    GRANT SELECT ON V_$PROCESS       TO monitor_user;
+    GRANT SELECT ON V_$SQLCOMMAND    TO monitor_user;
 
 주의: V$ACTIVE_SESSION_HISTORY / DBA_HIST_* / AWR 관련 뷰는 여기서 의도적으로
 사용하지 않는다 (Diagnostics Pack 라이선스 대상이라 조회만 해도 라이선스 이슈 발생).
@@ -116,9 +118,18 @@ def get_active_sessions(conn) -> list[dict]:
                 s.last_call_et       AS elapsed_sec,
                 s.blocking_session,
                 s.sql_id,
+                s.module,
+                s.program,
+                s.p1,
+                s.p2,
+                s.p3,
+                ROUND(p.pga_alloc_mem / 1024 / 1024, 1) AS pga_mb,
+                sc.command_name      AS command_text,
                 sq.sql_text
             FROM v$session s
             LEFT JOIN v$sql sq ON s.sql_id = sq.sql_id AND sq.child_number = 0
+            LEFT JOIN v$process p ON s.paddr = p.addr
+            LEFT JOIN v$sqlcommand sc ON s.command = sc.command_type
             WHERE s.username IS NOT NULL
               AND s.status = 'ACTIVE'
               AND s.type = 'USER'
@@ -210,7 +221,7 @@ def get_sql_detail(conn, sql_id: str) -> dict:
 
         cur.execute(
             """
-            SELECT id, parent_id, operation, options, object_name,
+            SELECT id, parent_id, depth, operation, options, object_name,
                    cost, cardinality, LPAD(' ', depth*2) || operation AS indented_op
             FROM v$sql_plan
             WHERE sql_id = :sql_id AND child_number = 0

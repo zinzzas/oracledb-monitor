@@ -3,45 +3,65 @@
 <head>
 <meta charset="UTF-8">
 <title>{{ title }} · Oracle DB Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root {
-    --bg: #0f1216; --panel: #171b21; --border: #262c35;
-    --text: #e6e9ef; --muted: #8b93a3;
-    --ok: #3ddc84; --warn: #f5a524; --accent: #4c8dff;
+    --bg: #121212; --panel: #1e1e1e; --panel-border: #2a2a2a;
+    --text: #e8e8e8; --body-c: #d0d0d0; --muted: #8a8a8a;
+    --hairline: #333333; --hairline-strong: #444444; --surface-soft: #252525;
+    --surface-dark: #0d0d0d;
+    --on-dark: #ffffff; --on-primary: #0a0a0a;
+    --primary: #4ade80; --primary-dark: #22c55e;
+    --radius: 4px;
+    --font: 'Inter', Arial, Helvetica, sans-serif;
+    --gap-sm: 12px; --gap-md: 20px; --gap-lg: 24px;
+    --ink: var(--text); --canvas: var(--panel);
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, "Malgun Gothic", sans-serif; }
-  header { display:flex; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid var(--border); }
-  header a.back { color:var(--muted); text-decoration:none; font-size:13px; }
-  header h1 { font-size:15px; margin:0; font-weight:600; }
-  main { padding: 18px 22px; max-width: 1280px; }
-
-  .searchbar { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px;
-    display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
-  .searchbar label { font-size:11.5px; color:var(--muted); margin-right:4px; }
-  .searchbar input, .searchbar select {
-    background:#0d1013; border:1px solid var(--border); color:var(--text); border-radius:6px;
-    padding:6px 8px; font-size:12.5px;
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); }
+  header { display:flex; align-items:center; gap:var(--gap-sm); padding:0 var(--gap-lg); height:48px; background:var(--surface-dark); border-bottom:1px solid var(--panel-border); }
+  header a.back {
+    color:var(--on-dark); text-decoration:none; font-size:12px; font-weight:700;
+    border:1px solid var(--hairline-strong); border-radius:999px; padding:5px 14px;
   }
-  .quickbtn { background:#20262f; border:1px solid var(--border); color:var(--text); border-radius:6px;
-    padding:6px 12px; font-size:12px; cursor:pointer; }
-  .quickbtn:hover { background:#262e39; }
-  .quickbtn.active { background:var(--accent); border-color:var(--accent); }
-  .btn-retrieve { background:var(--accent); border:none; color:#fff; border-radius:6px; padding:7px 16px; font-size:12.5px; cursor:pointer; font-weight:600; }
-  .btn-retrieve:hover { opacity:.9; }
-  .sep { width:1px; height:22px; background:var(--border); margin:0 4px; }
+  header a.back:hover { background:var(--primary); color:var(--on-primary); border-color:var(--primary); }
+  header h1 { font-size:14px; margin:0; font-weight:700; color:var(--on-dark); letter-spacing:.02em; }
+  main { padding:var(--gap-lg); padding-bottom:48px; max-width:1320px; margin:0 auto; display:flex; flex-direction:column; gap:var(--gap-md); }
 
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
-  .panel h2 { font-size:12.5px; color:var(--muted); margin:0 0 12px 0; text-transform:uppercase; letter-spacing:.04em; }
-  #chart { width:100%; height:440px; }
-  .note { font-size:11.5px; color:var(--muted); margin-top:10px; line-height:1.5; }
+  .searchbar {
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:var(--gap-md); display:flex; flex-wrap:wrap; align-items:center; gap:var(--gap-sm);
+  }
+  .searchbar label { font-size:11px; color:var(--muted); margin-right:2px; font-weight:700; text-transform:uppercase; }
+  .searchbar input, .searchbar select {
+    background:var(--surface-soft); border:1px solid var(--hairline); color:var(--text); border-radius:var(--radius);
+    padding:8px 10px; font-size:12.5px; font-family:var(--font);
+  }
+  .quickbtn {
+    background:transparent; border:1px solid var(--hairline); color:var(--text); border-radius:999px;
+    padding:7px 16px; font-size:12px; font-weight:700; cursor:pointer; font-family:var(--font);
+  }
+  .quickbtn:hover { border-color:var(--body-c); }
+  .quickbtn.active { background:var(--primary); border-color:var(--primary); color:var(--on-primary); }
+  .btn-retrieve {
+    background:var(--primary); border:1px solid var(--primary); color:var(--on-primary); border-radius:999px;
+    padding:8px 20px; font-size:12px; cursor:pointer; font-weight:700; font-family:var(--font);
+  }
+  .btn-retrieve:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
+  .sep { width:1px; height:22px; background:var(--hairline); margin:0 4px; }
+
+  .panel { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:var(--gap-md); }
+  .panel h2 { font-size:12px; color:var(--body-c); margin:0 0 var(--gap-sm) 0; letter-spacing:.02em; font-weight:700; }
+  #chart { width:100%; height:460px; }
+  .note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.6; }
   .loading { color:var(--muted); font-size:12.5px; }
 </style>
 </head>
 <body>
 <header>
-  <a class="back" href="/">&larr; 대시보드로</a>
+  <a class="back" href="/">← 대시보드로</a>
   <h1>{{ title }}</h1>
 </header>
 <main>
@@ -122,26 +142,67 @@ function ensureChart() {
   return chart;
 }
 
-const baseGrid = { left: 55, right: 60, top: 40, bottom: 70 };
+const baseGrid = { left: 10, right: 60, top: 44, bottom: 74, containLabel: true };
 const baseDataZoom = [
   { type: 'inside', start: 0, end: 100 },
   { type: 'slider', start: 0, end: 100, height: 22, bottom: 12,
-    borderColor: '#262c35', fillerColor: 'rgba(76,141,255,.15)', handleStyle: {color:'#4c8dff'},
-    textStyle: {color:'#8b93a3'} }
+    borderColor: '#444444', fillerColor: 'rgba(74,222,128,.15)', handleStyle: {color:'#4ade80'},
+    textStyle: {color:'#8a8a8a'}, backgroundColor: '#1e1e1e' }
 ];
-const baseTextStyle = { color: '#8b93a3', fontSize: 11 };
+const baseTextStyle = { color: '#8a8a8a', fontSize: 11, fontFamily: 'Inter, sans-serif' };
+const baseAxisLine = { lineStyle: { color: '#444444' } };
+const baseSplitLine = { lineStyle: { color: '#2a2a2a' } };
+const baseAxisLabel = { color: '#8a8a8a' };
+const baseNameStyle = { color: '#8a8a8a' };
+const baseLegend = { top: 0, textStyle: {color:'#8a8a8a'}, icon: 'circle' };
+const LINE_W = 3;
+const LINE_W_THIN = 2;
+// 말풍선: 꼬리 끝 (0,0) → 피크에 맞춤, 본체는 위로만 확장
+const BUBBLE_PATH = 'path://M0,0 L8,-9 L26,-9 Q30,-9 30,-13 L30,-30 Q30,-34 26,-34 L-26,-34 Q-30,-34 -30,-30 L-30,-13 Q-30,-9 -26,-9 L-8,-9 Z';
+const BUBBLE_SIZE = [66, 38];
+const BUBBLE_TIP_OFFSET_Y = -17;
+const BUBBLE_LABEL_OFFSET_Y = -19;
+
+function bubbleMarkPoint(lineColor, formatter) {
+  return {
+    symbol: BUBBLE_PATH,
+    symbolSize: BUBBLE_SIZE,
+    symbolKeepAspect: true,
+    symbolOffset: [0, BUBBLE_TIP_OFFSET_Y],
+    z: 30,
+    itemStyle: { color: lineColor, borderWidth: 0 },
+    label: {
+      show: true,
+      color: '#ffffff',
+      fontWeight: 'bold',
+      fontSize: 11,
+      fontFamily: 'Inter, sans-serif',
+      lineHeight: 13,
+      align: 'center',
+      verticalAlign: 'middle',
+      offset: [0, BUBBLE_LABEL_OFFSET_Y],
+      formatter: formatter || (p => p.value)
+    },
+    data: [{ type: 'max', name: 'max' }]
+  };
+}
+
+// 시간대 표기를 24:00:00 형식으로 통일 (로케일 기본값에 의존하지 않고 직접 포맷팅)
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtTime24(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function fmtDateTime24(d) { return `${pad2(d.getMonth()+1)}/${pad2(d.getDate())} ${fmtTime24(d)}`; }
 
 function tsToLabel(tsSec) {
-  return new Date(tsSec * 1000).toLocaleString('ko-KR', {hour12:false, month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+  return fmtDateTime24(new Date(tsSec * 1000));
 }
 
 function lineSeries(name, color, data, opts) {
   opts = opts || {};
   return Object.assign({
-    name, type: 'line', data, showSymbol: false, lineStyle: {color, width: opts.width || 2},
+    name, type: 'line', data, showSymbol: false, lineStyle: {color, width: opts.width || LINE_W},
     itemStyle: {color},
-    markPoint: { symbolSize: 46, label:{fontSize:10}, data: [{type:'max', name:'max'}] }
-  }, opts.stack ? {stack: opts.stack, areaStyle: {opacity: .5}} : {});
+    markPoint: bubbleMarkPoint(color)
+  }, opts.stack ? {stack: opts.stack, areaStyle: {opacity: .6}} : {});
 }
 
 async function fetchDetail(start, end, stat) {
@@ -163,7 +224,7 @@ async function fetchAndRender() {
   // ensureChart()를 먼저 호출해 DOM을 확보한 다음, 로딩은 ECharts 내장 API로 표시
   // (chartEl.innerHTML을 직접 덮어쓰면 이미 생성된 차트의 DOM이 파괴되어 두 번째 검색부터 깨짐)
   ensureChart();
-  chart.showLoading({ text: '조회 중...', color: '#4c8dff', textColor: '#8b93a3', maskColor: 'rgba(15,18,22,0.7)' });
+  chart.showLoading({ text: '조회 중...', color: '#4ade80', textColor: '#8a8a8a', maskColor: 'rgba(18,18,18,0.85)' });
   const data = await fetchDetail(start, end, stat);
   chart.hideLoading();
 
@@ -175,40 +236,40 @@ async function fetchAndRender() {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
       yAxis: [
-        { type:'value', name:'CPU %', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
-        { type:'value', name:'Mem(MB)', splitLine:{show:false} }
+        { type:'value', name:'CPU %', max:100, splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+        { type:'value', name:'Mem(MB)', splitLine:{show:false}, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel }
       ],
       series: [
-        Object.assign(lineSeries('CPU% MAX', '#4c8dff', data.buckets.map(b => b.cpu_pct_max)), {yAxisIndex:0}),
-        Object.assign(lineSeries('CPU% AVG', '#8ab4ff', data.buckets.map(b => b.cpu_pct_avg), {width:1}), {yAxisIndex:0, lineStyle:{color:'#8ab4ff', width:1, type:'dashed'}}),
-        Object.assign(lineSeries('Mem Used MAX', '#3ddc84', data.buckets.map(b => b.mem_used_mb_max)), {yAxisIndex:1})
+        Object.assign(lineSeries('CPU% MAX', '#4ade80', data.buckets.map(b => b.cpu_pct_max)), {yAxisIndex:0}),
+        Object.assign(lineSeries('CPU% AVG', '#22c55e', data.buckets.map(b => b.cpu_pct_avg), {width:LINE_W_THIN}), {yAxisIndex:0, lineStyle:{color:'#22c55e', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}}),
+        Object.assign(lineSeries('Mem Used MAX', '#fb923c', data.buckets.map(b => b.mem_used_mb_max)), {yAxisIndex:1})
       ]
     };
   } else if (METRIC === 'active-sessions') {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name:'세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: [
-        lineSeries('MAX', '#4c8dff', data.buckets.map(b => b.active_sessions_max)),
-        Object.assign(lineSeries('AVG', '#3ddc84', data.buckets.map(b => b.active_sessions_avg), {width:1}), {lineStyle:{color:'#3ddc84', width:1, type:'dashed'}})
+        lineSeries('MAX', '#22d3ee', data.buckets.map(b => b.active_sessions_max)),
+        Object.assign(lineSeries('AVG', '#60a5fa', data.buckets.map(b => b.active_sessions_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#60a5fa', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
       ]
     };
   } else if (METRIC === 'lock-waiting') {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name:'대기 세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'대기 세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: [
-        lineSeries('MAX', '#f5455c', data.buckets.map(b => b.cnt_max)),
-        Object.assign(lineSeries('AVG', '#f5a524', data.buckets.map(b => b.cnt_avg), {width:1}), {lineStyle:{color:'#f5a524', width:1, type:'dashed'}})
+        lineSeries('MAX', '#f87171', data.buckets.map(b => b.cnt_max)),
+        Object.assign(lineSeries('AVG', '#fb923c', data.buckets.map(b => b.cnt_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#fb923c', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
       ]
     };
   } else if (METRIC === 'wait-class') {
@@ -217,15 +278,15 @@ async function fetchAndRender() {
     classes.forEach(c => data.series[c].forEach(p => allTs.add(p.ts)));
     const xsSorted = Array.from(allTs).sort((a,b) => a-b);
     const xs = xsSorted.map(tsToLabel);
-    const colors = {'User I/O':'#4c8dff','System I/O':'#3ddc84','Concurrency':'#f5a524','Application':'#f5455c','Commit':'#a78bfa','Network':'#22d3ee','Configuration':'#94a3b8','Administrative':'#eab308','Scheduler':'#fb7185','Cluster':'#34d399','Queueing':'#fbbf24','Other':'#64748b'};
+    const colors = {'User I/O':'#22d3ee','System I/O':'#60a5fa','Concurrency':'#facc15','Application':'#f87171','Commit':'#4ade80','Network':'#e879f9','Configuration':'#8a8a8a','Administrative':'#fb923c','Scheduler':'#a78bfa','Cluster':'#bef264','Queueing':'#6b7280','Other':'#4b5563'};
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name:'초', splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'초', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: classes.map(c => {
         const byTs = Object.fromEntries(data.series[c].map(p => [p.ts, p.wait_sec]));
-        return lineSeries(c, colors[c] || '#64748b', xsSorted.map(t => byTs[t] ?? 0), {stack:'wc'});
+        return lineSeries(c, colors[c] || '#6b7280', xsSorted.map(t => byTs[t] ?? 0), {stack:'wc', width:LINE_W_THIN, markPoint: {show:false}});
       })
     };
     footnote.textContent = '수집기 배포 시점부터의 데이터만 존재합니다 (V$SYSTEM_EVENT 델타 기반, AWR 미사용).';
@@ -233,13 +294,13 @@ async function fetchAndRender() {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name:'%', max:100, splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'%', max:100, splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: [
-        lineSeries('User', '#f5455c', data.buckets.map(b => b.user_pct_avg), {stack:'cpu'}),
-        lineSeries('Sys', '#4c8dff', data.buckets.map(b => b.sys_pct_avg), {stack:'cpu'}),
-        lineSeries('IO Wait', '#f5a524', data.buckets.map(b => b.iowait_pct_avg), {stack:'cpu'})
+        Object.assign(lineSeries('User', '#f87171', data.buckets.map(b => b.user_pct_avg), {stack:'cpu', width:LINE_W_THIN}), {markPoint: {show:false}}),
+        Object.assign(lineSeries('Sys', '#4ade80', data.buckets.map(b => b.sys_pct_avg), {stack:'cpu', width:LINE_W_THIN}), {markPoint: {show:false}}),
+        Object.assign(lineSeries('IO Wait', '#fb923c', data.buckets.map(b => b.iowait_pct_avg), {stack:'cpu', width:LINE_W_THIN}), {markPoint: {show:false}})
       ]
     };
     footnote.textContent = 'V$OSSTAT 누적치 델타 기반 추정 분해입니다. 플랫폼에 따라 IO Wait 값이 없을 수 있습니다.';
@@ -247,12 +308,12 @@ async function fetchAndRender() {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name: (data.stat || '') + ' /sec', splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name: (data.stat || '') + ' /sec', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: [
-        lineSeries('MAX', '#4c8dff', data.buckets.map(b => b.rate_per_sec_max)),
-        Object.assign(lineSeries('AVG', '#3ddc84', data.buckets.map(b => b.rate_per_sec_avg), {width:1}), {lineStyle:{color:'#3ddc84', width:1, type:'dashed'}})
+        lineSeries('MAX', '#4ade80', data.buckets.map(b => b.rate_per_sec_max)),
+        Object.assign(lineSeries('AVG', '#22d3ee', data.buckets.map(b => b.rate_per_sec_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#22d3ee', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
       ]
     };
     footnote.textContent = `V$SYSSTAT '${data.stat}' 누적치 델타 기반 초당 레이트 (라이선스 무관 베이스 뷰).`;
@@ -260,19 +321,44 @@ async function fetchAndRender() {
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
-      tooltip: { trigger: 'axis' }, legend: { top: 0, textStyle: {color:'#8b93a3'} },
-      xAxis: { type: 'category', data: xs, axisLine:{lineStyle:{color:'#262c35'}} },
-      yAxis: { type:'value', name:'세션수', splitLine:{lineStyle:{color:'#1d222a'}} },
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
       series: [
-        lineSeries('Total MAX', '#4c8dff', data.buckets.map(b => b.total_max)),
-        Object.assign(lineSeries('Total AVG', '#8ab4ff', data.buckets.map(b => b.total_avg), {width:1}), {lineStyle:{color:'#8ab4ff', width:1, type:'dashed'}}),
-        lineSeries('Active AVG', '#3ddc84', data.buckets.map(b => b.active_avg))
+        lineSeries('Total MAX', '#4ade80', data.buckets.map(b => b.total_max)),
+        Object.assign(lineSeries('Total AVG', '#22c55e', data.buckets.map(b => b.total_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#22c55e', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}}),
+        lineSeries('Active AVG', '#fb923c', data.buckets.map(b => b.active_avg))
       ]
     };
+  } else if (METRIC === 'long-session') {
+    const xs = data.buckets.map(b => tsToLabel(b.ts));
+    option = {
+      backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
+      tooltip: { trigger: 'axis' }, legend: baseLegend,
+      xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      series: [
+        { name:'<3s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt3_avg), itemStyle:{color:'#4ade80'} },
+        { name:'<10s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt10_avg), itemStyle:{color:'#22d3ee'} },
+        { name:'<15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt15_avg), itemStyle:{color:'#facc15'} },
+        { name:'≥15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_ge15_avg), itemStyle:{color:'#f87171'} }
+      ]
+    };
+    footnote.textContent = '수집기가 폴링마다 실행 중 세션의 elapsed_sec을 4단계로 집계한 값입니다 (MaxGauge의 "인스턴스별" 스택을 단일 인스턴스 특성에 맞게 "시간대별" 구간으로 변형).';
   }
 
   chart.setOption(option, true);
 }
+
+// URL 쿼리(?stat=...)로 들어온 경우 초기 지표 선택 (대시보드 상세보기 링크에서 사용)
+(function() {
+  const statSel = document.getElementById('stat-select');
+  const qsStat = new URLSearchParams(location.search).get('stat');
+  if (statSel && qsStat) {
+    const opt = Array.from(statSel.options).find(o => o.value === qsStat);
+    if (opt) statSel.value = qsStat;
+  }
+})();
 
 // 초기 로드: 최근 6시간
 applyQuickRange('6h');

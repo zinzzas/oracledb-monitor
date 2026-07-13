@@ -70,6 +70,25 @@ CREATE TABLE IF NOT EXISTS session_count_snapshot (
     inactive  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_sesscount_ts ON session_count_snapshot(ts);
+
+CREATE TABLE IF NOT EXISTS alert_log (
+    ts             INTEGER NOT NULL,
+    instance_name  TEXT,
+    name           TEXT NOT NULL,
+    value          REAL,
+    level          TEXT NOT NULL,   -- Critical | Warning | Info
+    log_message    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alert_ts ON alert_log(ts);
+
+CREATE TABLE IF NOT EXISTS long_session_snapshot (
+    ts        INTEGER NOT NULL,
+    cnt_lt3   INTEGER,   -- elapsed < 3s
+    cnt_lt10  INTEGER,   -- 3s <= elapsed < 10s
+    cnt_lt15  INTEGER,   -- 10s <= elapsed < 15s
+    cnt_ge15  INTEGER    -- elapsed >= 15s
+);
+CREATE INDEX IF NOT EXISTS idx_longsess_ts ON long_session_snapshot(ts);
 """
 
 
@@ -183,6 +202,9 @@ def purge_old(retention_hours: int | None = None):
         conn.execute("DELETE FROM cpu_breakdown_snapshot WHERE ts < ?", (cutoff,))
         conn.execute("DELETE FROM sysstat_snapshot WHERE ts < ?", (cutoff,))
         conn.execute("DELETE FROM session_count_snapshot WHERE ts < ?", (cutoff,))
+        conn.execute("DELETE FROM long_session_snapshot WHERE ts < ?", (cutoff,))
+        # alert_log는 저빈도·고가치 데이터라 7배 더 오래 보관
+        conn.execute("DELETE FROM alert_log WHERE ts < ?", (cutoff - retention_hours * 3600 * 6,))
         conn.commit()
 
 
@@ -234,6 +256,34 @@ def insert_session_counts(data: dict):
             (int(time.time()), data.get("total"), data.get("active"), data.get("inactive")),
         )
         conn.commit()
+
+
+def insert_alert(instance_name: str, name: str, value, level: str, log_message: str) -> dict:
+    """임계치 전이 감지 시 호출 (collector). 삽입된 로우를 dict 로 돌려줘서
+    바로 WebSocket broadcast 에 쓸 수 있게 한다."""
+    ts = int(time.time())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO alert_log (ts, instance_name, name, value, level, log_message) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ts, instance_name, name, value, level, log_message),
+        )
+        conn.commit()
+    return {
+        "ts": ts, "instance_name": instance_name, "name": name,
+        "value": value, "level": level, "log_message": log_message,
+    }
+
+
+def get_recent_alerts(limit: int = 50) -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT ts, instance_name, name, value, level, log_message "
+            "FROM alert_log ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
 
 def _auto_bucket_sec(start_ts: int, end_ts: int, max_points: int = 800) -> int:
@@ -354,3 +404,90 @@ def get_lock_count_range(start_ts: int, end_ts: int, bucket_sec: int | None = No
         rows = [dict(r) for r in cur.fetchall()]
     bucket_sec = bucket_sec or _auto_bucket_sec(start_ts, end_ts)
     return _bucketize(rows, ["cnt"], bucket_sec)
+
+
+# ---------------------------------------------------------------------------
+# V2: Long Active Session Count (시간대별 장시간 실행 세션 구간 스택)
+#     MaxGauge는 "인스턴스별" 스택인데 우리는 단일 인스턴스라 "시간대별"로 변형.
+# ---------------------------------------------------------------------------
+
+def insert_long_session_counts(data: dict):
+    if not data:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO long_session_snapshot (ts, cnt_lt3, cnt_lt10, cnt_lt15, cnt_ge15) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                int(time.time()),
+                data.get("cnt_lt3", 0), data.get("cnt_lt10", 0),
+                data.get("cnt_lt15", 0), data.get("cnt_ge15", 0),
+            ),
+        )
+        conn.commit()
+
+
+def get_long_session_range(start_ts: int, end_ts: int, bucket_sec: int | None = None) -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT ts, cnt_lt3, cnt_lt10, cnt_lt15, cnt_ge15 FROM long_session_snapshot "
+            "WHERE ts BETWEEN ? AND ? ORDER BY ts ASC",
+            (start_ts, end_ts),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    bucket_sec = bucket_sec or _auto_bucket_sec(start_ts, end_ts, max_points=200)
+    return _bucketize(rows, ["cnt_lt3", "cnt_lt10", "cnt_lt15", "cnt_ge15"], bucket_sec)
+
+
+# ---------------------------------------------------------------------------
+# V2: 24 Hours Trend Comparison (오늘 vs 어제/평일 겹쳐보기)
+#     stat 은 metric_snapshot 컬럼(cpu_pct/active_sessions/mem_used_mb) 중 하나거나,
+#     그 외에는 sysstat_snapshot.stat_name 으로 취급한다.
+#     컬럼명은 고정 화이트리스트만 허용하므로 f-string 삽입이어도 SQL Injection 위험 없음.
+# ---------------------------------------------------------------------------
+
+_METRIC_COLUMNS = {"cpu_pct", "active_sessions", "mem_used_mb"}
+
+
+def _get_raw_series(stat: str, start_ts: int, end_ts: int) -> list[tuple]:
+    with get_conn() as conn:
+        if stat in _METRIC_COLUMNS:
+            cur = conn.execute(
+                f"SELECT ts, {stat} AS v FROM metric_snapshot "
+                "WHERE ts BETWEEN ? AND ? ORDER BY ts ASC",
+                (start_ts, end_ts),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT ts, rate_per_sec AS v FROM sysstat_snapshot "
+                "WHERE stat_name = ? AND ts BETWEEN ? AND ? ORDER BY ts ASC",
+                (stat, start_ts, end_ts),
+            )
+        return [(ts, v) for ts, v in cur.fetchall() if v is not None]
+
+
+def get_trend_comparison(
+    stat: str, today_start: int, today_end: int, compare_start: int, compare_end: int,
+    bucket_sec: int = 300,
+) -> dict:
+    """각 날짜의 자정(00:00) 기준 경과초(tod_sec)로 버켓해 두 시리즈를 같은 시간대축에
+    올릴 수 있게 맞춰준다 (날짜는 다르지만 시각적으로 겹쳐보기 가능)."""
+
+    def _bucket_relative(raw, day_start):
+        buckets: dict[int, list] = {}
+        for ts, v in raw:
+            rel = ts - day_start
+            b = (rel // bucket_sec) * bucket_sec
+            buckets.setdefault(b, []).append(v)
+        return [
+            {"tod_sec": b, "value": round(sum(vals) / len(vals), 3)}
+            for b, vals in sorted(buckets.items())
+        ]
+
+    raw_today = _get_raw_series(stat, today_start, today_end)
+    raw_compare = _get_raw_series(stat, compare_start, compare_end)
+    return {
+        "today": _bucket_relative(raw_today, today_start),
+        "compare": _bucket_relative(raw_compare, compare_start),
+    }

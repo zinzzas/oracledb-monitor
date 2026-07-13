@@ -25,7 +25,14 @@ LATEST: dict = {
     "cpu_breakdown": None,
     "wait_class": [],
     "session_counts": None,
+    "sysstat_live": {},
+    "alerts": [],
+    "long_session_counts": None,
 }
+
+# 임계치 전이(None/warn/high/crit) 추적 - 상태가 바뀌는 순간에만 alert_log 에 기록해
+# 폴링(5초)마다 알림이 쓸리는 것을 방지한다 (edge-triggered).
+_alert_state: dict = {"cpu": None, "mem": None, "lock": None, "slow": None}
 
 # 이전 폴링의 누적치 스냅샷 (Wait Class/CPU 분해/V$SYSSTAT는 누적 카운터라
 # 두 폴링 간 차이를 계산해야 구간치가 나온다. 첫 폴링은 기준점만 잡고 저장하지 않는다.)
@@ -116,6 +123,77 @@ def _compute_deltas(now_ts: float, wait_events: dict, os_times: dict, sysstat: d
     return result
 
 
+_LEVEL_LABEL = {"warn": "Warning", "high": "Warning", "crit": "Critical"}
+
+
+def _level_for_pct(pct):
+    if pct is None:
+        return None
+    if pct >= settings.alert_crit_pct:
+        return "crit"
+    if pct >= settings.alert_high_pct:
+        return "high"
+    if pct >= settings.alert_warn_pct:
+        return "warn"
+    return None
+
+
+def _check_alert_transitions(overview: dict, locks: list, slow: list) -> list:
+    """MaxGauge의 Alert Log 위젯 대응. 상태가 바뀌는 순간에만(edge-triggered)
+    alert_log 에 기록하고, 그 순간 새로 생긴 알림들만 반환해 broadcast에 포함한다."""
+    instance = settings.instance_label
+    new_alerts = []
+
+    def _transition(key, new_level, name, value, log_msg):
+        if new_level != _alert_state.get(key):
+            if new_level is not None:
+                level_label = _LEVEL_LABEL[new_level]
+                row = sqlite_store.insert_alert(instance, name, value, level_label, log_msg)
+                new_alerts.append(row)
+            _alert_state[key] = new_level
+
+    cpu_pct = overview.get("cpu_pct")
+    _transition("cpu", _level_for_pct(cpu_pct), "CPU USAGE", cpu_pct, f"CPU {cpu_pct}%")
+
+    mem_pct = None
+    if overview.get("mem_total_mb"):
+        mem_pct = round(overview["mem_used_mb"] / overview["mem_total_mb"] * 100, 1)
+    _transition("mem", _level_for_pct(mem_pct), "MEMORY USAGE", mem_pct, f"Memory {mem_pct}%")
+
+    lock_level = "warn" if locks else None
+    _transition(
+        "lock", lock_level, "LOCK WAITING", len(locks),
+        f"{len(locks)} blocking session(s) detected",
+    )
+
+    slow_level = "warn" if slow else None
+    _transition(
+        "slow", slow_level, "SLOW QUERY", (slow[0]["avg_elapsed_sec"] if slow else 0),
+        f"{len(slow)} slow quer{'y' if len(slow) == 1 else 'ies'} "
+        f"(threshold {settings.slow_query_threshold_sec}s)",
+    )
+
+    return new_alerts
+
+
+def _bucket_session_durations(sessions: list) -> dict:
+    """Long Active Session Count 위젯용 - elapsed_sec 기준 4단계 티어로 카운트."""
+    counts = {"cnt_lt3": 0, "cnt_lt10": 0, "cnt_lt15": 0, "cnt_ge15": 0}
+    for s in sessions:
+        el = s.get("elapsed_sec")
+        if el is None:
+            continue
+        if el < 3:
+            counts["cnt_lt3"] += 1
+        elif el < 10:
+            counts["cnt_lt10"] += 1
+        elif el < 15:
+            counts["cnt_lt15"] += 1
+        else:
+            counts["cnt_ge15"] += 1
+    return counts
+
+
 def _collect_once_sync():
     """동기 Oracle 조회 (블로킹) - asyncio.to_thread 로 실행됨."""
     pool = get_pool()
@@ -140,24 +218,35 @@ def _collect_once_sync():
     sqlite_store.insert_lock_events(locks)
     sqlite_store.insert_session_counts(session_counts)
 
+    long_session_counts = _bucket_session_durations(sessions)
+    sqlite_store.insert_long_session_counts(long_session_counts)
+
     deltas = _compute_deltas(time.time(), wait_events, os_times, sysstat)
     cpu_breakdown = None
     wait_class_rows: list = []
+    sysstat_live: dict = {}
     if deltas:
         cpu_breakdown = deltas["cpu_breakdown"]
         wait_class_rows = deltas["wait_class"]
         sqlite_store.insert_wait_class(wait_class_rows)
         sqlite_store.insert_cpu_breakdown(cpu_breakdown)
         sqlite_store.insert_sysstat(deltas["sysstat"])
+        sysstat_live = {r["stat_name"]: r for r in deltas["sysstat"]}
+
+    overview_full = {**overview, "active_sessions": snapshot["active_sessions"]}
+    new_alerts = _check_alert_transitions(overview_full, locks, slow)
 
     return {
-        "overview": {**overview, "active_sessions": snapshot["active_sessions"]},
+        "overview": overview_full,
         "sessions": sessions,
         "locks": locks,
         "slow_queries": slow,
         "cpu_breakdown": cpu_breakdown,
         "wait_class": wait_class_rows,
         "session_counts": session_counts,
+        "sysstat_live": sysstat_live,
+        "alerts": new_alerts,
+        "long_session_counts": long_session_counts,
     }
 
 
