@@ -212,6 +212,7 @@ def _log_long_queries(sessions: list) -> list[dict]:
         rows.append({
             "ts": ts, "sql_id": s.get("sql_id"), "elapsed_sec": el, "tier": tier,
             "username": s.get("username"), "module": s.get("module"),
+            "sql_text": s.get("sql_text"), "is_plsql_call": s.get("is_plsql_call", False),
         })
     return rows
 

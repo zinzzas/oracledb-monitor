@@ -133,6 +133,11 @@
   .copy-btn:hover { border-color:var(--primary); color:var(--primary); }
   .copy-btn.copied { border-color:var(--primary); color:var(--primary); background:rgba(74,222,128,.12); }
   .table-scroll { overflow-x:auto; }
+  .plsql-badge {
+    display:inline-block; font-size:9.5px; font-weight:700; color:#a78bfa; border:1px solid #a78bfa;
+    border-radius:3px; padding:0 4px; margin-right:5px; vertical-align:1px;
+  }
+  .plsql-text { color:#c4b5fd; }
 
   /* ---- 모달 (드래그 브러시 -> 상세 팝업) ---- */
   .modal-overlay {
@@ -865,7 +870,7 @@ function renderSessions(rows) {
       <td>${esc(r.elapsed_sec)}</td><td>${esc(r.pga_mb)}</td><td>${esc(r.command_text)}</td>
       <td>${esc(r.p1)}</td><td>${esc(r.p2)}</td><td>${esc(r.p3)}</td>
       <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a>` : '-'}</td>
-      <td title="${esc(r.sql_text)}">${esc((r.sql_text||'').slice(0,60))}</td>
+      <td title="${esc(r.sql_text)}" class="${r.is_plsql_call ? 'plsql-text' : ''}">${r.is_plsql_call ? '<span class="plsql-badge">PL/SQL</span>' : ''}${esc((r.sql_text||'').slice(0,60))}</td>
       <td><button class="copy-btn" data-idx="${i}">복사</button></td>
     </tr>`).join('');
   body.querySelectorAll('.copy-btn').forEach(btn => {

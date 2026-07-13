@@ -17,6 +17,9 @@ V$ 동적 성능 뷰 조회 모음.
     GRANT SELECT ON V_$SYSSTAT       TO monitor_user;
     GRANT SELECT ON V_$PROCESS       TO monitor_user;
     GRANT SELECT ON V_$SQLCOMMAND    TO monitor_user;
+    -- ALL_OBJECTS / ALL_PROCEDURES는 보통 PUBLIC에 기본 GRANT되어 있어 별도 조치 불필요하지만,
+    -- 보안 강화된 인스턴스라면 PUBLIC 권한이 회수되어 있을 수 있으니 get_active_sessions()의
+    -- PL/SQL 패키지 호출 식별(fallback 라벨링)이 안 되면 이 둘 권한부터 확인할 것.
 
 주의: V$ACTIVE_SESSION_HISTORY / DBA_HIST_* / AWR 관련 뷰는 여기서 의도적으로
 사용하지 않는다 (Diagnostics Pack 라이선스 대상이라 조회만 해도 라이선스 이슈 발생).
@@ -153,18 +156,49 @@ def get_active_sessions(conn) -> list[dict]:
                 s.p3,
                 ROUND(p.pga_alloc_mem / 1024 / 1024, 1) AS pga_mb,
                 sc.command_name      AS command_text,
-                sq.sql_text
+                sq.sql_text,
+                peo.owner            AS plsql_owner,
+                peo.object_name      AS plsql_package_name,
+                pep.procedure_name   AS plsql_procedure_name
             FROM v$session s
             LEFT JOIN v$sql sq ON s.sql_id = sq.sql_id AND sq.child_number = 0
             LEFT JOIN v$process p ON s.paddr = p.addr
             LEFT JOIN v$sqlcommand sc ON s.command = sc.command_type
+            LEFT JOIN all_objects peo ON peo.object_id = s.plsql_entry_object_id
+            LEFT JOIN all_procedures pep
+                   ON pep.object_id = s.plsql_entry_object_id
+                  AND pep.subprogram_id = s.plsql_entry_subprogram_id
             WHERE s.username IS NOT NULL
               AND s.status = 'ACTIVE'
               AND s.type = 'USER'
             ORDER BY s.last_call_et DESC
             """
         )
-        return _rows_as_dicts(cur)
+        return _apply_plsql_fallback_label(_rows_as_dicts(cur))
+
+
+def _apply_plsql_fallback_label(rows: list[dict]) -> list[dict]:
+    """MyBatis의 CallableStatement로 패키지 프로시저를 호출하는 경우(RPC성 PL/SQL 호출)
+    Oracle 10.2+ 부터 V$SESSION.SQL_ID 가 NULL로 나온다 (top-level SQL이 없는 구조적 특성).
+    이 경우 SQL_ID/SQL_TEXT 대신 PLSQL_ENTRY_OBJECT_ID/SUBPROGRAM_ID로 실행 중인
+    패키지.프로시저를 식별해 sql_text 자리에 대체 표시한다."""
+    for r in rows:
+        is_plsql = False
+        if not r.get("sql_text") and r.get("plsql_package_name"):
+            owner = r.get("plsql_owner")
+            pkg = r["plsql_package_name"]
+            proc = r.get("plsql_procedure_name")
+            label = f"{owner}.{pkg}" if owner else pkg
+            if proc:
+                label += f".{proc}"
+            r["sql_text"] = f"[PL/SQL] {label}"
+            is_plsql = True
+        # 원시 컴럼은 페이로드에서 제거 (WebSocket으로 5초마다 나가는 데이터라 가벼게 유지)
+        r.pop("plsql_owner", None)
+        r.pop("plsql_package_name", None)
+        r.pop("plsql_procedure_name", None)
+        r["is_plsql_call"] = is_plsql
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +266,19 @@ def get_slow_queries(conn, min_avg_elapsed_sec: float = 5.0, limit: int = 30) ->
 
 def get_sql_detail(conn, sql_id: str) -> dict:
     with conn.cursor() as cur:
+        # child_number=0으로 고정하면 패키지 호출처럼 바인드 타입이 매번 달라지는 케이스에서
+        # 자식 커서 0이 이미 사라지고(aged out) 다른 번호만 남아 있을 수 있어,
+        # 실제로 존재하는 가장 작은 child_number를 대신 사용한다.
         cur.execute(
             """
-            SELECT sql_id, executions, elapsed_time, cpu_time, buffer_gets,
-                   disk_reads, rows_processed, parsing_schema_name, sql_fulltext
-            FROM v$sql
-            WHERE sql_id = :sql_id AND child_number = 0
+            SELECT * FROM (
+                SELECT sql_id, child_number, executions, elapsed_time, cpu_time, buffer_gets,
+                       disk_reads, rows_processed, parsing_schema_name, sql_fulltext
+                FROM v$sql
+                WHERE sql_id = :sql_id
+                ORDER BY child_number
+            )
+            WHERE ROWNUM = 1
             """,
             sql_id=sql_id,
         )
@@ -246,16 +287,17 @@ def get_sql_detail(conn, sql_id: str) -> dict:
             return {}
         cols = [c[0].lower() for c in cur.description]
         detail = {col: _clob_to_str(val) for col, val in zip(cols, row)}
+        child_number = detail.pop("child_number")  # 실행계획 조회용으로만 쓰고 응답에는 미포함
 
         cur.execute(
             """
             SELECT id, parent_id, depth, operation, options, object_name,
                    cost, cardinality, LPAD(' ', depth*2) || operation AS indented_op
             FROM v$sql_plan
-            WHERE sql_id = :sql_id AND child_number = 0
+            WHERE sql_id = :sql_id AND child_number = :child_number
             ORDER BY id
             """,
-            sql_id=sql_id,
+            sql_id=sql_id, child_number=child_number,
         )
         plan_rows = _rows_as_dicts(cur)
         detail["plan"] = _flag_high_impact_steps(plan_rows)

@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS long_query_log (
     elapsed_sec  REAL,
     tier         TEXT,     -- lt10 | lt15 | ge15  (3초 미만은 저장하지 않음)
     username     TEXT,
-    module       TEXT
+    module       TEXT,
+    sql_text     TEXT,     -- PL/SQL 패키지 호출은 SQL_ID가 NULL이라 이 텍스트로만 식별 가능
+    is_plsql_call INTEGER  -- 0/1 - SQL_ID 없는 패키지.프로시저 호출인지 플래그
 );
 CREATE INDEX IF NOT EXISTS idx_longquery_ts ON long_query_log(ts);
 """
@@ -130,10 +132,24 @@ def init_db():
         # (기본값 rollback journal은 쓰기마다 fsync해서 이 프로젝트처럼 고빈도 쓰기 워크로드에 치명적).
         conn.execute("PRAGMA journal_mode=WAL")
         conn.commit()
+        # CREATE TABLE IF NOT EXISTS는 이미 있는 테이블에 새 컴럼을 추가해주지 않으므로,
+        # 기존 배포본에 새로 생긴 컴럼을 안전하게 보강한다.
+        _migrate_schema(conn)
         # 3일치 운영 중 발견된 문제: DELETE로 보존기간 지난 로우를 지우더라도 VACUUM 없이는
         # 파일 크기가 안 줄어든다 (빈 페이지만 재사용). 시작 시 한 번 안쓰는 공간을 회수해
         # DB 파일을 실제 데이터 크기만큼 압축한다 (수십 MB 수준이라 수초 내 완료됨).
         conn.execute("VACUUM")
+
+
+def _migrate_schema(conn):
+    """long_query_log에 sql_text/is_plsql_call 컴럼이 없는 기존 DB라면 ALTER로 보강한다
+    (mybatis callable 패키지 호출을 Long Active Session Count 드릴다운에서도 식별하기 위해 추가)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(long_query_log)").fetchall()]
+    if "sql_text" not in cols:
+        conn.execute("ALTER TABLE long_query_log ADD COLUMN sql_text TEXT")
+    if "is_plsql_call" not in cols:
+        conn.execute("ALTER TABLE long_query_log ADD COLUMN is_plsql_call INTEGER")
+    conn.commit()
 
 
 def insert_metric_snapshot(snapshot: dict):
@@ -270,11 +286,12 @@ def write_poll_batch(
 
         if long_query_rows:
             conn.executemany(
-                "INSERT INTO long_query_log (ts, sql_id, elapsed_sec, tier, username, module) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO long_query_log (ts, sql_id, elapsed_sec, tier, username, module, sql_text, is_plsql_call) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (r["ts"], r.get("sql_id"), r.get("elapsed_sec"), r.get("tier"),
-                     r.get("username"), r.get("module"))
+                     r.get("username"), r.get("module"), r.get("sql_text"),
+                     1 if r.get("is_plsql_call") else 0)
                     for r in long_query_rows
                 ],
             )
@@ -595,13 +612,13 @@ def get_long_query_log(start_ts: int, end_ts: int, tier: str | None = None, limi
         conn.row_factory = sqlite3.Row
         if tier:
             cur = conn.execute(
-                "SELECT ts, sql_id, elapsed_sec, tier, username, module FROM long_query_log "
+                "SELECT ts, sql_id, elapsed_sec, tier, username, module, sql_text, is_plsql_call FROM long_query_log "
                 "WHERE ts BETWEEN ? AND ? AND tier = ? ORDER BY elapsed_sec DESC LIMIT ?",
                 (start_ts, end_ts, tier, limit),
             )
         else:
             cur = conn.execute(
-                "SELECT ts, sql_id, elapsed_sec, tier, username, module FROM long_query_log "
+                "SELECT ts, sql_id, elapsed_sec, tier, username, module, sql_text, is_plsql_call FROM long_query_log "
                 "WHERE ts BETWEEN ? AND ? ORDER BY elapsed_sec DESC LIMIT ?",
                 (start_ts, end_ts, limit),
             )

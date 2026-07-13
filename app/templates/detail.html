@@ -221,16 +221,17 @@ function showDrilldownModal(rows, tier, emptyMsg) {
   } else {
     body.innerHTML = `
       <table>
-        <thead><tr><th>User</th><th>Module</th><th>Elapsed(s)</th><th>SQL_ID</th></tr></thead>
+        <thead><tr><th>User</th><th>Module</th><th>Elapsed(s)</th><th>SQL_ID</th><th>SQL Text</th></tr></thead>
         <tbody>
           ${rows.map(r => `
             <tr>
               <td>${esc(r.username)}</td><td>${esc(r.module)}</td><td>${esc(r.elapsed_sec)}</td>
               <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a>` : '-'}</td>
+              <td title="${esc(r.sql_text)}">${r.is_plsql_call ? '<span class="plsql-badge">PL/SQL</span>' : ''}${esc((r.sql_text||'').slice(0,50))}</td>
             </tr>`).join('')}
         </tbody>
       </table>
-      <div class="hint">SQL_ID 클릭 시 새 탭에서 상세 SQL/실행계획으로 이동합니다.</div>`;
+      <div class="hint">SQL_ID 클릭 시 새 탭에서 상세 SQL/실행계획으로 이동합니다. 패키지.프로시저 호출(PL/SQL RPC)은 Oracle 구조상 SQL_ID가 없어 링크 대신 SQL Text에 패키지.프로시저명을 표시합니다.</div>`;
   }
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
