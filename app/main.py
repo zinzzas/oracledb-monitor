@@ -34,8 +34,11 @@ async def on_startup():
     get_pool()  # 커넥션 풀 초기화 (실패 시 여기서 바로 에러가 나서 원인 파악이 쉬움)
     sqlite_store.init_db()
     _scheduler = metrics_collector.start_scheduler()
-    # 시작하자마자 한 번 즉시 수집해서 첫 화면이 비어있지 않도록 한다.
-    await metrics_collector.collect_once()
+    # 시작하자마자 백그라운드로 첫 수집을 돌려 첫 화면이 비어있지 않도록 한다.
+    # await로 막으면 Oracle V$ 뷰 10개 순차 조회가 끝날 때까지 uvicorn이 어떤 HTTP 요청도
+    # 받지 못해(ASGI startup 이벤트가 끝나야 서빙 시작) 최초 새로고침이 9~10초까지 걸렸던 원인이다.
+    # 대시보드는 이미 로딩 상태를 보여주니까 몇 초 뒤 WebSocket broadcast로 실제 데이터가 도착해도 괜찮다.
+    asyncio.create_task(metrics_collector.collect_once())
 
 
 @app.on_event("shutdown")
