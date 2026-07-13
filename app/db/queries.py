@@ -45,40 +45,68 @@ def _rows_as_dicts(cursor) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def get_host_cpu_mem(conn) -> dict:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT stat_name, value FROM v$osstat
-            WHERE stat_name IN (
-                'NUM_CPUS', 'PHYSICAL_MEMORY_BYTES', 'FREE_MEMORY_BYTES',
-                'BUSY_TIME', 'IDLE_TIME'
+    """
+    호스트의 CPU 코어 수, CPU 사용율 및 물리/가용 메모리 통계를 조회합니다.
+    오류 처리를 위해 try-except 블록을 사용하고, 리눅스 환경의 캐시/버퍼 특성을 고려하여
+    완전 유휴 메모리(FREE_MEMORY_BYTES)와 필요시 즉각 회수 가능한 비활성 메모리(INACTIVE_MEMORY_BYTES)를
+    모두 가용 메모리(Available Memory)로 판단하여 정확한 메모리 사용율을 산출합니다.
+    """
+    try:
+        # 1) v$osstat 에서 CPU 코어 및 메모리 메트릭 조회
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT stat_name, value FROM v$osstat
+                WHERE stat_name IN (
+                    'NUM_CPUS', 'PHYSICAL_MEMORY_BYTES', 'FREE_MEMORY_BYTES',
+                    'INACTIVE_MEMORY_BYTES', 'BUSY_TIME', 'IDLE_TIME'
+                )
+                """
             )
-            """
-        )
-        osstat = {name.lower(): val for name, val in cur.fetchall()}
+            osstat = {name.lower(): val for name, val in cur.fetchall()}
 
-        cur.execute(
-            """
-            SELECT value FROM v$sysmetric
-            WHERE metric_name = 'Host CPU Utilization (%)'
-            AND group_id = 2
-            ORDER BY end_time DESC FETCH FIRST 1 ROW ONLY
-            """
-        )
-        row = cur.fetchone()
-        cpu_pct = round(row[0], 1) if row else None
+            # 2) v$sysmetric 에서 15초/60초 주기 호스트 CPU 사용율 조회
+            cur.execute(
+                """
+                SELECT value FROM v$sysmetric
+                WHERE metric_name = 'Host CPU Utilization (%)'
+                AND group_id = 2
+                ORDER BY end_time DESC FETCH FIRST 1 ROW ONLY
+                """
+            )
+            row = cur.fetchone()
+            cpu_pct = round(row[0], 1) if row else None
 
-    total_mem = osstat.get("physical_memory_bytes") or 0
-    free_mem = osstat.get("free_memory_bytes") or 0
-    used_mem = max(total_mem - free_mem, 0)
+        # 3) 메모리 사용량 계산
+        # - total_mem: 전체 물리 메모리 크기 (Bytes)
+        # - inactive_mem: 비활성 메모리 (필요시 버퍼/캐시 해제를 통해 즉각 사용 가능한 공간)
+        # - real_free_mem: 단순 free 메모리 + 비활성 가용 메모리 합산
+        total_mem = osstat.get("physical_memory_bytes") or 0
+        free_mem_raw = osstat.get("free_memory_bytes") or 0
+        inactive_mem = osstat.get("inactive_memory_bytes") or 0
+        
+        # 실제 운영체제 수준에서 즉시 가용한 가용 메모리를 정의
+        real_free_mem = free_mem_raw + inactive_mem
+        used_mem = max(total_mem - real_free_mem, 0)
 
-    return {
-        "num_cpus": osstat.get("num_cpus"),
-        "cpu_pct": cpu_pct,
-        "mem_total_mb": round(total_mem / 1024 / 1024, 1),
-        "mem_used_mb": round(used_mem / 1024 / 1024, 1),
-        "mem_free_mb": round(free_mem / 1024 / 1024, 1),
-    }
+        return {
+            "num_cpus": osstat.get("num_cpus"),
+            "cpu_pct": cpu_pct,
+            "mem_total_mb": round(total_mem / 1024 / 1024, 1),
+            "mem_used_mb": round(used_mem / 1024 / 1024, 1),
+            "mem_free_mb": round(real_free_mem / 1024 / 1024, 1),
+        }
+    except Exception as e:
+        # 에러 발생 시 로그를 남기고 빈 데이터 반환 (시스템 중단 방지)
+        import logging
+        logging.getLogger("queries").error(f"get_host_cpu_mem 조회 오류: {str(e)}")
+        return {
+            "num_cpus": None,
+            "cpu_pct": None,
+            "mem_total_mb": 0.0,
+            "mem_used_mb": 0.0,
+            "mem_free_mb": 0.0,
+        }
 
 
 def get_sga_pga(conn) -> dict:

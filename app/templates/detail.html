@@ -137,12 +137,23 @@ function ensureChart() {
   if (!chart) {
     chartEl.innerHTML = '';
     chart = echarts.init(chartEl, null, {renderer:'svg'});
-    window.addEventListener('resize', () => chart.resize());
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => {
+        try {
+          chart.resize();
+        } catch (e) {
+          console.error(e);
+        }
+      });
+      observer.observe(chartEl);
+    } else {
+      window.addEventListener('resize', () => chart.resize());
+    }
   }
   return chart;
 }
 
-const baseGrid = { left: 10, right: 60, top: 44, bottom: 74, containLabel: true };
+const baseGrid = { left: 10, right: 60, top: 60, bottom: 74, containLabel: true };
 const baseDataZoom = [
   { type: 'inside', start: 0, end: 100 },
   { type: 'slider', start: 0, end: 100, height: 22, bottom: 12,
@@ -161,7 +172,8 @@ const LINE_W_THIN = 2;
 const BUBBLE_PATH = 'path://M0,0 L8,-9 L26,-9 Q30,-9 30,-13 L30,-30 Q30,-34 26,-34 L-26,-34 Q-30,-34 -30,-30 L-30,-13 Q-30,-9 -26,-9 L-8,-9 Z';
 const BUBBLE_SIZE = [66, 38];
 const BUBBLE_TIP_OFFSET_Y = -17;
-const BUBBLE_LABEL_OFFSET_Y = -19;
+// label의 y 오프셋을 -3으로 보정하여 말풍선 연두색 사각형 몸통 중앙에 수치가 들어가도록 함
+const BUBBLE_LABEL_OFFSET_Y = -3;
 
 function bubbleMarkPoint(lineColor, formatter) {
   return {
@@ -240,7 +252,7 @@ async function fetchAndRender() {
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
       yAxis: [
         { type:'value', name:'CPU %', max:100, splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
-        { type:'value', name:'Mem(MB)', splitLine:{show:false}, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel }
+        { type:'value', name:'Mem(MB)', splitLine:{show:false}, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] }
       ],
       series: [
         Object.assign(lineSeries('CPU% MAX', '#4ade80', data.buckets.map(b => b.cpu_pct_max)), {yAxisIndex:0}),
@@ -254,7 +266,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
         lineSeries('MAX', '#22d3ee', data.buckets.map(b => b.active_sessions_max)),
         Object.assign(lineSeries('AVG', '#60a5fa', data.buckets.map(b => b.active_sessions_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#60a5fa', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
@@ -266,7 +278,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name:'대기 세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'대기 세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
         lineSeries('MAX', '#f87171', data.buckets.map(b => b.cnt_max)),
         Object.assign(lineSeries('AVG', '#fb923c', data.buckets.map(b => b.cnt_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#fb923c', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
@@ -283,7 +295,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name:'초', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'초', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: classes.map(c => {
         const byTs = Object.fromEntries(data.series[c].map(p => [p.ts, p.wait_sec]));
         return lineSeries(c, colors[c] || '#6b7280', xsSorted.map(t => byTs[t] ?? 0), {stack:'wc', width:LINE_W_THIN, markPoint: {show:false}});
@@ -310,7 +322,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name: (data.stat || '') + ' /sec', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name: (data.stat || '') + ' /sec', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
         lineSeries('MAX', '#4ade80', data.buckets.map(b => b.rate_per_sec_max)),
         Object.assign(lineSeries('AVG', '#22d3ee', data.buckets.map(b => b.rate_per_sec_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#22d3ee', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}})
@@ -323,7 +335,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
         lineSeries('Total MAX', '#4ade80', data.buckets.map(b => b.total_max)),
         Object.assign(lineSeries('Total AVG', '#22c55e', data.buckets.map(b => b.total_avg), {width:LINE_W_THIN}), {lineStyle:{color:'#22c55e', width:LINE_W_THIN, type:'dashed'}, markPoint: {show:false}}),
@@ -336,7 +348,7 @@ async function fetchAndRender() {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
       tooltip: { trigger: 'axis' }, legend: baseLegend,
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
-      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel },
+      yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
         { name:'<3s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt3_avg), itemStyle:{color:'#4ade80'} },
         { name:'<10s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt10_avg), itemStyle:{color:'#22d3ee'} },

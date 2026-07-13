@@ -47,13 +47,28 @@ app/
     └── sql_detail.html     # SQL 상세 (전문 + 실행계획)
 ```
 
-## 화면 구성
+## 화면 구성 및 연동 지표 (Widgets & Metrics Mapping)
 
-1. **대시보드** — CPU/Mem/Active Session/SGA·PGA 카드 + 실시간 X-log(CPU%, 세션수 시계열) 라인차트
-2. **실행 중인 쿼리** — SID/USER/EVENT/ELAPSED/BLOCKED BY/SQL_ID 테이블, SQL_ID 클릭 시 상세로 이동
-3. **Lock/Blocking** — `V$SESSION.BLOCKING_SESSION` 기반 블로킹 체인
-4. **슬로우 쿼리** — `.env`의 `SLOW_QUERY_THRESHOLD_SEC` 이상인 평균 elapsed 쿼리
-5. **SQL 상세 페이지** (`/sql/{sql_id}`) — SQL 전문, 실행계획, 통계
+대시보드의 각 화면 위젯과 상세 페이지는 라이선스 침해 우려가 없는 순수 Oracle 기본 V$ 뷰를 실시간으로 가공 및 매핑하여 사용하고 있습니다.
+
+| 화면 영역 / 위젯명 | 수집 대상 Oracle V$ 뷰 | 상세 매핑 지표 (Metric) | 설명 |
+| :--- | :--- | :--- | :--- |
+| **CPU / Memory** | `V$SYSMETRIC`<br>`V$OSSTAT` | `Host CPU Utilization (%)`<br>`PHYSICAL_MEMORY_BYTES`<br>`FREE_MEMORY_BYTES`<br>`INACTIVE_MEMORY_BYTES` | **CPU**: 실시간 Host CPU 사용량 (%)<br>**메모리**: 가용 메모리(`Free + Inactive`)를 분모로 한 실제 메모리 사용률 계산 (리눅스 캐시 영역 오판 방지) |
+| **SQL Elapsed Time** | `V$SESSION`<br>`V$SQL` | `LAST_CALL_ET`<br>`SQL_ID`, `SQL_TEXT` | ACTIVE 사용자 세션의 최종 쿼리 기동 경과 시간을 스캐터(산점도) 차트로 매핑 (마우스 드래그를 통해 구간별 상세 SQL 팝업 가능) |
+| **Alert Log** | `SQLite (Internal)` | `alert_log` 테이블 | CPU/Memory/Lock/Slow 임계치 초과 시 상태 전이(warn/high/crit) 시점을 기록한 Edge-triggered 경보 이력 |
+| **Active Sessions** | `V$SESSION` | `status = 'ACTIVE'`, `type = 'USER'` | 현재 DB에 접속하여 ACTIVE 상태로 쿼리를 수행 중인 사용자 세션의 총 합산 수 |
+| **SGA / PGA (MB)** | `V$SGAINFO`<br>`V$PGASTAT` | `Total SGA Size`<br>`total PGA allocated` | SGA 전체 할당 크기 및 현재 세션들에 의해 할당된 PGA 메모리 크기 합산 |
+| **Blocking Chains** | `V$SESSION` | `BLOCKING_SESSION` | 12c+ 기준 대기 중인 Lock 세션(Waiter)과 주 원인 세션(Blocker) 간의 관계 수 |
+| **Logical / Physical Reads** | `V$SYSSTAT` | `session logical reads`<br>`physical reads` | **Logical**: 초당 데이터 버퍼 캐시 논리적 블록 읽기 수 (Rate/sec)<br>**Physical**: 초당 디스크 물리적 블록 읽기 수 (Rate/sec) |
+| **24h Trend Comparison** | `SQLite (Internal)` | `metric_snapshot` 등 | 선택한 지표의 오늘 시간대 추이와 전 영업일(또는 어제)의 동일 시간대 겹쳐보기 시계열 |
+| **Long Active Session Count** | `V$SESSION` | `LAST_CALL_ET` 버킷 카운트 | 쿼리 수행 시간을 기준으로 활성 세션을 4단계(`<3s`, `<10s`, `<15s`, `≥15s`)로 분류해 누적한 스택 바 |
+| **X-LOG (실시간 추이)** | `V$SYSMETRIC`<br>`V$SESSION` | `Host CPU Utilization (%)`<br>`active sessions count` | 최근 30분 동안의 호스트 CPU 사용율 및 활성 세션 수 추이를 실시간 WebSocket으로 브로드캐스트 |
+| **Wait Class (실시간 대기)** | `V$SYSTEM_EVENT` | `TIME_WAITED_MICRO` (Idle 제외) | 인스턴스 기동 이후의 누적 대기 시간을 폴링 단위 델타로 환산하여 초 단위 대기 시간으로 매핑 |
+| **CPU 분해 (실시간 분해)** | `V$OSSTAT` | `USER_TIME`, `SYS_TIME`<br>`IOWAIT_TIME`, `NUM_CPUS` | 호스트 CPU 소비 시간을 커널(Sys), 유저(User), 디스크대기(IO Wait) 비율로 환산해 분해 |
+| **Active Sessions 테이블** | `V$SESSION`<br>`V$PROCESS`<br>`V$SQLCOMMAND` | `SID`, `SERIAL#`, `EVENT`, `PGA_ALLOC_MEM`, `SQL_TEXT` 등 | 현재 실행 중인 활성 세션의 상세 세션 정보, 대기 이벤트, 세션당 PGA 메모리 및 SQL 전문 연동 |
+| **Lock / Blocking 테이블** | `V$SESSION` 자가조인 | `waiter.blocking_session = blocker.sid` | 대기 세션(Waiter)이 대기 중인 락 이벤트(`EVENT`) 및 블로커 정보 시각화 |
+| **슬로우 쿼리 테이블** | `V$SQL` | `ELAPSED_TIME / EXECUTIONS` | 비계정(Not SYS/SYSTEM) 쿼리 중 평균 소요시간이 임계치(`SLOW_QUERY_THRESHOLD_SEC`) 이상인 쿼리 목록 |
+| **SQL 상세 페이지** | `V$SQL`<br>`V$SQL_PLAN` | `executions`, `elapsed_time` 등<br>`indented execution plan` | 특정 SQL_ID에 대한 실행 통계(CPU/디스크 I/O) 및 트리 구조로 들여쓰기된 쿼리 실행 계획 |
 
 ## 라이선스 관련 주의사항
 
