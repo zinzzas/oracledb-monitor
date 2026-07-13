@@ -257,9 +257,28 @@ def get_sql_detail(conn, sql_id: str) -> dict:
             """,
             sql_id=sql_id,
         )
-        detail["plan"] = _rows_as_dicts(cur)
+        plan_rows = _rows_as_dicts(cur)
+        detail["plan"] = _flag_high_impact_steps(plan_rows)
 
     return detail
+
+
+def _flag_high_impact_steps(plan_rows: list[dict], cost_ratio_threshold: float = 0.5) -> list[dict]:
+    """실행계획에서 성능에 영향을 줄 수 있는 단계를 표시하기 위해 각 row에 high_impact 플래그를 붙인다.
+    기준: (1) TABLE ACCESS FULL (인덱스 미사용 전체 스캔 - 가장 흔한 성능 저하 원인),
+    또는 (2) 해당 단계의 cost가 플랜 전체 최대 cost의 cost_ratio_threshold(기본 50%) 이상인 경우."""
+    costs = [r["cost"] for r in plan_rows if r.get("cost") is not None]
+    max_cost = max(costs) if costs else 0
+    for r in plan_rows:
+        operation = (r.get("operation") or "").upper()
+        options = (r.get("options") or "").upper()
+        is_full_table_scan = operation == "TABLE ACCESS" and options == "FULL"
+        is_high_cost = (
+            max_cost > 0 and r.get("cost") is not None
+            and r["cost"] >= max_cost * cost_ratio_threshold
+        )
+        r["high_impact"] = bool(is_full_table_scan or is_high_cost)
+    return plan_rows
 
 
 # ---------------------------------------------------------------------------

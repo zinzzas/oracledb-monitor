@@ -2,10 +2,9 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>{{ title }} · Oracle DB Monitor</title>
+<title>{{ title }} · Oracle Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root {
     --bg: #121212; --panel: #1e1e1e; --panel-border: #2a2a2a;
@@ -57,6 +56,21 @@
   #chart { width:100%; height:460px; }
   .note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.6; }
   .loading { color:var(--muted); font-size:12.5px; }
+
+  /* 드릴다운 모달 (Long Active Session Count 막대 클릭 시 SQL 목록) */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); display:flex; align-items:center; justify-content:center; z-index:100; }
+  .modal-overlay.hidden { display:none; }
+  .modal-box { background:var(--panel); border-radius:var(--radius); width:min(760px, 92vw); max-height:82vh; display:flex; flex-direction:column; border:1px solid var(--panel-border); }
+  .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:var(--surface-dark); border-bottom:1px solid var(--panel-border); }
+  .modal-head h3 { margin:0; color:var(--on-dark); font-size:14px; font-weight:700; }
+  .modal-close { background:transparent; border:none; color:var(--on-dark); font-size:22px; cursor:pointer; line-height:1; }
+  .modal-body { padding:16px 20px; overflow-y:auto; }
+  .modal-body table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .modal-body th { text-align:left; color:var(--muted); font-weight:700; padding:8px; border-bottom:1px solid var(--hairline-strong); font-size:11px; text-transform:uppercase; }
+  .modal-body td { padding:8px; border-bottom:1px solid var(--hairline); color:var(--body-c); }
+  a.sqlid { color:#60a5fa; text-decoration:none; font-family:monospace; font-weight:700; }
+  a.sqlid:hover { text-decoration:underline; }
+  .hint { font-size:11px; color:var(--muted); margin-top:8px; }
 </style>
 </head>
 <body>
@@ -68,6 +82,7 @@
   <div class="searchbar">
     <button class="quickbtn" data-range="1h">최근 1시간</button>
     <button class="quickbtn" data-range="6h">최근 6시간</button>
+    <button class="quickbtn" data-range="24h">24시간</button>
     <button class="quickbtn" data-range="today">오늘</button>
     <button class="quickbtn" data-range="yesterday">어제</button>
     <div class="sep"></div>
@@ -94,10 +109,23 @@
   </div>
 </main>
 
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="modal-title">SQL 목록</h3>
+      <button class="modal-close" id="modal-close">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const METRIC = "{{ metric }}";
 const chartEl = document.getElementById('chart');
 let chart = null;
+let lastDetailData = null; // 막대 클릭 드릴다운용 - 매 fetchAndRender 호출마다 최신 buckets/bucket_sec 보관
+const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function toLocalInputValue(d) {
   const pad = n => String(n).padStart(2, '0');
@@ -114,6 +142,7 @@ function applyQuickRange(kind) {
   let from, to = now;
   if (kind === '1h') { from = new Date(now.getTime() - 3600 * 1000); }
   else if (kind === '6h') { from = new Date(now.getTime() - 6 * 3600 * 1000); }
+  else if (kind === '24h') { from = new Date(now.getTime() - 24 * 3600 * 1000); }
   else if (kind === 'today') { from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0); }
   else if (kind === 'yesterday') {
     const y = new Date(now); y.setDate(y.getDate() - 1);
@@ -149,9 +178,64 @@ function ensureChart() {
     } else {
       window.addEventListener('resize', () => chart.resize());
     }
+    chart.on('click', onChartClick);
   }
   return chart;
 }
+
+const TIER_LABEL = { lt10: '3~10초', lt15: '10~15초', ge15: '15초 이상' };
+const SERIES_TO_TIER = { '<3s': null, '<10s': 'lt10', '<15s': 'lt15', '≥15s': 'ge15' };
+
+function onChartClick(params) {
+  if (METRIC !== 'long-session' || !lastDetailData || params.seriesType !== 'bar') return;
+  const tier = SERIES_TO_TIER[params.seriesName];
+  if (tier === undefined) return;
+  if (tier === null) {
+    showDrilldownModal([], null, '3초 미만은 노이즈로 판단해 개별 SQL을 수집하지 않습니다.');
+    return;
+  }
+  const bucket = lastDetailData.buckets[params.dataIndex];
+  if (!bucket) return;
+  openLongSessionDrilldown(bucket.ts, bucket.ts + (lastDetailData.bucket_sec || 60), tier);
+}
+
+async function openLongSessionDrilldown(startTs, endTs, tier) {
+  // 클릭이 무시되지 않았다는 걸 바로 보여주기 위해 로딩 상태로 모달을 먼저 열고, 응답이 오면 실제 내용으로 교체한다.
+  const label = TIER_LABEL[tier] || tier;
+  document.getElementById('modal-title').textContent = `${label} 조회 중...`;
+  document.getElementById('modal-body').innerHTML = '<div class="loading">SQL 목록을 불러오는 중...</div>';
+  document.getElementById('modal-overlay').classList.remove('hidden');
+
+  const res = await fetch(`/api/long-session/queries?start=${startTs}&end=${endTs}&tier=${tier}`);
+  const data = await res.json();
+  showDrilldownModal(data.rows || [], tier);
+}
+
+function showDrilldownModal(rows, tier, emptyMsg) {
+  const label = tier ? TIER_LABEL[tier] : '';
+  document.getElementById('modal-title').textContent = tier
+    ? `${label} 실행 쿼리 (${rows.length}건)` : 'SQL 목록';
+  const body = document.getElementById('modal-body');
+  if (rows.length === 0) {
+    body.innerHTML = `<div class="loading">${emptyMsg || '해당 구간에 3초 이상 실행된 쿼리가 없습니다.'}</div>`;
+  } else {
+    body.innerHTML = `
+      <table>
+        <thead><tr><th>User</th><th>Module</th><th>Elapsed(s)</th><th>SQL_ID</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${esc(r.username)}</td><td>${esc(r.module)}</td><td>${esc(r.elapsed_sec)}</td>
+              <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a>` : '-'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="hint">SQL_ID 클릭 시 새 탭에서 상세 SQL/실행계획으로 이동합니다.</div>`;
+  }
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+document.getElementById('modal-close').addEventListener('click', () => document.getElementById('modal-overlay').classList.add('hidden'));
+document.getElementById('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') e.currentTarget.classList.add('hidden'); });
 
 const baseGrid = { left: 10, right: 60, top: 60, bottom: 74, containLabel: true };
 const baseDataZoom = [
@@ -343,6 +427,7 @@ async function fetchAndRender() {
       ]
     };
   } else if (METRIC === 'long-session') {
+    lastDetailData = data; // { buckets, bucket_sec } - 막대 클릭 드릴다운에 사용
     const xs = data.buckets.map(b => tsToLabel(b.ts));
     option = {
       backgroundColor: 'transparent', textStyle: baseTextStyle, grid: baseGrid, dataZoom: baseDataZoom,
@@ -350,13 +435,13 @@ async function fetchAndRender() {
       xAxis: { type: 'category', data: xs, axisLine: baseAxisLine, axisLabel: baseAxisLabel },
       yAxis: { type:'value', name:'세션수', splitLine: baseSplitLine, nameTextStyle: baseNameStyle, axisLabel: baseAxisLabel, boundaryGap: [0, '15%'] },
       series: [
-        { name:'<3s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt3_avg), itemStyle:{color:'#4ade80'} },
-        { name:'<10s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt10_avg), itemStyle:{color:'#22d3ee'} },
-        { name:'<15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt15_avg), itemStyle:{color:'#facc15'} },
-        { name:'≥15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_ge15_avg), itemStyle:{color:'#f87171'} }
+        { name:'<3s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt3_avg), itemStyle:{color:'#4ade80'}, cursor:'pointer' },
+        { name:'<10s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt10_avg), itemStyle:{color:'#22d3ee'}, cursor:'pointer' },
+        { name:'<15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_lt15_avg), itemStyle:{color:'#facc15'}, cursor:'pointer' },
+        { name:'≥15s', type:'bar', stack:'ls', data: data.buckets.map(b => b.cnt_ge15_avg), itemStyle:{color:'#f87171'}, cursor:'pointer' }
       ]
     };
-    footnote.textContent = '수집기가 폴링마다 실행 중 세션의 elapsed_sec을 4단계로 집계한 값입니다 (MaxGauge의 "인스턴스별" 스택을 단일 인스턴스 특성에 맞게 "시간대별" 구간으로 변형).';
+    footnote.textContent = '수집기가 폴링마다 실행 중 세션의 elapsed_sec을 4단계로 집계한 값입니다 (MaxGauge의 "인스턴스별" 스택을 단일 인스턴스 특성에 맞게 "시간대별" 구간으로 변형). 막대를 클릭하면 해당 구간에 3초 이상 실행된 SQL 목록이 팝업으로 표시됩니다 (3초 미만은 미수집).';
   }
 
   chart.setOption(option, true);

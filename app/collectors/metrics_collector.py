@@ -194,6 +194,28 @@ def _bucket_session_durations(sessions: list) -> dict:
     return counts
 
 
+def _log_long_queries(sessions: list) -> list[dict]:
+    """3초 이상 실행 중인 개별 세션을 저장해 Long Active Session Count 막대
+    클릭 시 SQL/실행계획으로 드릴다운할 수 있게 한다. 3초 미만은 노이즈라 저장하지 않는다."""
+    ts = int(time.time())
+    rows = []
+    for s in sessions:
+        el = s.get("elapsed_sec")
+        if el is None or el < 3:
+            continue
+        if el < 10:
+            tier = "lt10"
+        elif el < 15:
+            tier = "lt15"
+        else:
+            tier = "ge15"
+        rows.append({
+            "ts": ts, "sql_id": s.get("sql_id"), "elapsed_sec": el, "tier": tier,
+            "username": s.get("username"), "module": s.get("module"),
+        })
+    return rows
+
+
 def _collect_once_sync():
     """동기 Oracle 조회 (블로킹) - asyncio.to_thread 로 실행됨."""
     pool = get_pool()
@@ -213,25 +235,33 @@ def _collect_once_sync():
         sysstat = queries.get_sysstat_metrics(conn)
         session_counts = queries.get_session_counts(conn)
 
-    sqlite_store.insert_metric_snapshot(snapshot)
-    sqlite_store.insert_slow_queries(slow)
-    sqlite_store.insert_lock_events(locks)
-    sqlite_store.insert_session_counts(session_counts)
-
     long_session_counts = _bucket_session_durations(sessions)
-    sqlite_store.insert_long_session_counts(long_session_counts)
+    long_query_rows = _log_long_queries(sessions)
 
     deltas = _compute_deltas(time.time(), wait_events, os_times, sysstat)
     cpu_breakdown = None
     wait_class_rows: list = []
     sysstat_live: dict = {}
+    sysstat_rows_for_write = None
     if deltas:
         cpu_breakdown = deltas["cpu_breakdown"]
         wait_class_rows = deltas["wait_class"]
-        sqlite_store.insert_wait_class(wait_class_rows)
-        sqlite_store.insert_cpu_breakdown(cpu_breakdown)
-        sqlite_store.insert_sysstat(deltas["sysstat"])
+        sysstat_rows_for_write = deltas["sysstat"]
         sysstat_live = {r["stat_name"]: r for r in deltas["sysstat"]}
+
+    # 폴링 한 번의 모든 쓰기를 단일 커넥션/트랜잭션으로 묶는다
+    # (이전에는 폴링마다 7~9개의 개별 커넥션을 열고 닫았음 — 대시보드 로딩 속도 개선 재검토 항목).
+    sqlite_store.write_poll_batch(
+        metric_snapshot=snapshot,
+        slow_queries=slow,
+        lock_events=locks,
+        session_counts=session_counts,
+        long_session_counts=long_session_counts,
+        long_query_rows=long_query_rows,
+        wait_class_rows=wait_class_rows or None,
+        cpu_breakdown=cpu_breakdown,
+        sysstat_rows=sysstat_rows_for_write,
+    )
 
     overview_full = {**overview, "active_sessions": snapshot["active_sessions"]}
     new_alerts = _check_alert_transitions(overview_full, locks, slow)
@@ -259,6 +289,12 @@ async def collect_once():
         logger.exception("collector 실패: %s", e)
 
 
+async def _maintenance():
+    """보존기간 지난 로우 삭제 + VACUUM. sqlite3는 동기 API라 to_thread로 돌려 이벤트루프를 막지 않게 한다."""
+    await asyncio.to_thread(sqlite_store.purge_old)
+    await asyncio.to_thread(sqlite_store.vacuum_db)
+
+
 def start_scheduler() -> AsyncIOScheduler:
     sqlite_store.init_db()
     scheduler = AsyncIOScheduler()
@@ -271,10 +307,12 @@ def start_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
     scheduler.add_job(
-        sqlite_store.purge_old,
+        _maintenance,
         "interval",
-        hours=1,
-        id="retention_purge",
+        hours=6,
+        id="retention_purge_and_vacuum",
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.start()
     return scheduler

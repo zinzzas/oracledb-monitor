@@ -21,7 +21,7 @@ from app.collectors import metrics_collector
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Oracle DB Monitor")
+app = FastAPI(title="Oracle Monitor")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
@@ -178,10 +178,17 @@ async def api_detail(metric: str, start: int, end: int, stat: Optional[str] = No
         return {"buckets": buckets}
 
     if metric == "long-session":
-        buckets = await asyncio.to_thread(sqlite_store.get_long_session_range, start, end)
-        return {"buckets": buckets}
+        result = await asyncio.to_thread(sqlite_store.get_long_session_range, start, end)
+        return {"buckets": result["rows"], "bucket_sec": result["bucket_sec"]}
 
     return {"error": f"unknown metric: {metric}"}
+
+
+@app.get("/api/long-session/queries")
+async def api_long_session_queries(start: int, end: int, tier: Optional[str] = None):
+    """Long Active Session Count 막대 클릭 드릴다운 - 해당 구간/티어의 3초 이상 실행 스냅샷 목록."""
+    rows = await asyncio.to_thread(sqlite_store.get_long_query_log, start, end, tier)
+    return {"rows": rows}
 
 
 @app.get("/api/trend-comparison")

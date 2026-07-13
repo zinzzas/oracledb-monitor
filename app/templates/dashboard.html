@@ -2,10 +2,9 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>Oracle DB Monitor</title>
+<title>Oracle Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   /* ---- MaxGauge DPM 다크 톤 ---- */
   :root {
@@ -108,7 +107,6 @@
   }
   .btn-primary-sm:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
 
-  #xlog-chart { width:100%; height:240px; flex-shrink:0; }
   .mini-chart { width:100%; height:200px; flex:1; min-height:180px; }
 
   table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -174,7 +172,7 @@
 
 <header>
   <div class="htitle">
-    <h1>Oracle DB Monitor</h1>
+    <h1>Oracle Monitor</h1>
     <span class="instance-badge">{{ instance_label }}</span>
   </div>
   <span id="conn-badge">연결 중...</span>
@@ -208,7 +206,7 @@
       <div class="alert-table-wrap">
         <table>
           <thead><tr><th>Time</th><th>Name</th><th>Value</th><th>Level</th></tr></thead>
-          <tbody id="alert-body"><tr><td colspan="4" class="empty">알림 없음</td></tr></tbody>
+          <tbody id="alert-body"><tr><td colspan="4" class="empty">조회 중...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -266,12 +264,21 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head">
-      <h2>X-LOG · CPU% / Active Sessions (실시간)</h2>
-      <a class="detail-link" href="/detail/cpu-mem" target="_blank" rel="noopener">상세보기 →</a>
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>X-LOG · CPU % (실시간)</h2>
+        <a class="detail-link" href="/detail/cpu-mem" target="_blank" rel="noopener">상세보기 →</a>
+      </div>
+      <div id="xlog-cpu-chart" class="mini-chart"></div>
     </div>
-    <div id="xlog-chart"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>X-LOG · Active Sessions (실시간)</h2>
+        <a class="detail-link" href="/detail/active-sessions" target="_blank" rel="noopener">상세보기 →</a>
+      </div>
+      <div id="xlog-sessions-chart" class="mini-chart"></div>
+    </div>
   </div>
 
   <div class="grid2">
@@ -346,6 +353,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtNum = (n) => n == null ? '-' : Number(n).toLocaleString('en-US');
@@ -521,8 +529,10 @@ function tsToTimeLabel(tsSec) {
   return fmtDateTime24(new Date(tsSec * 1000));
 }
 let alertRows = [];
+let alertsLoaded = false; // 첫 조회 완료 전에는 "조회 중..." 로딩 상태를 보여주고, 빈 결과와 로딩 상태를 구분한다.
 function renderAlerts() {
   const body = document.getElementById('alert-body');
+  if (!alertsLoaded) { body.innerHTML = '<tr><td colspan="4" class="empty">조회 중...</td></tr>'; return; }
   if (alertRows.length === 0) { body.innerHTML = '<tr><td colspan="4" class="empty">알림 없음</td></tr>'; return; }
   body.innerHTML = alertRows.slice(0, 30).map(a => `
     <tr>
@@ -534,48 +544,59 @@ function renderAlerts() {
 }
 function prependAlerts(rows) {
   if (!rows || rows.length === 0) return;
+  alertsLoaded = true;
   alertRows = [...rows, ...alertRows];
   renderAlerts();
 }
 
-/* ================= X-LOG ================= */
-const xlogChart = echarts.init(document.getElementById('xlog-chart'), null, {renderer:'svg'});
-trackChart(xlogChart);
+/* ================= X-LOG (단일 축으로 분리 — 이중 Y축이 값 오독을 유발해 각각 별도 차트로 분리) ================= */
+const xlogCpuChart = echarts.init(document.getElementById('xlog-cpu-chart'), null, {renderer:'svg'});
+trackChart(xlogCpuChart);
+const xlogSessionsChart = echarts.init(document.getElementById('xlog-sessions-chart'), null, {renderer:'svg'});
+trackChart(xlogSessionsChart);
 const MAX_POINTS = 120;
 let xlogData = { time: [], cpu: [], sessions: [] };
 
-function renderXlog() {
-  xlogChart.setOption({
+function renderXlogCpu() {
+  xlogCpuChart.setOption({
     backgroundColor: 'transparent',
-    grid: { left: 8, right: 64, top: 50, bottom: 8, containLabel: true },
+    grid: { left: 8, right: 12, top: 40, bottom: 8, containLabel: true },
     textStyle: CHART_TEXT,
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: xlogData.time, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL },
-    yAxis: [
-      { type:'value', name:'CPU %', max:100, splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL },
-      { type:'value', name:'Sessions', splitLine:{show:false}, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL, boundaryGap: [0, '15%'] }
-    ],
-    series: [
-      {
-        name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:false,
-        lineStyle:{color:'#4ade80', width:LINE_W}, yAxisIndex:0,
-        markPoint: bubbleMarkPoint('#4ade80', p => (p.value ?? '-') + '%')
-      },
-      {
-        name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:false,
-        lineStyle:{color:'#22d3ee', width:LINE_W}, yAxisIndex:1,
-        markPoint: bubbleMarkPoint('#22d3ee', p => fmtNum(p.value))
-      }
-    ]
+    yAxis: { type:'value', name:'CPU %', max:100, splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL },
+    series: [{
+      name:'CPU %', type:'line', data: xlogData.cpu, showSymbol:false, smooth:false,
+      lineStyle:{color:'#4ade80', width:LINE_W},
+      markPoint: bubbleMarkPoint('#4ade80', p => (p.value ?? '-') + '%')
+    }]
   });
 }
-renderXlog();
+
+function renderXlogSessions() {
+  xlogSessionsChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 8, right: 12, top: 40, bottom: 8, containLabel: true },
+    textStyle: CHART_TEXT,
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: xlogData.time, axisLine: CHART_AXIS_LINE, axisLabel: CHART_AXIS_LABEL },
+    yAxis: { type:'value', name:'Sessions', splitLine: CHART_SPLIT_LINE, nameTextStyle: CHART_NAME_STYLE, axisLabel: CHART_AXIS_LABEL, boundaryGap: [0, '15%'] },
+    series: [{
+      name:'Active Sessions', type:'line', data: xlogData.sessions, showSymbol:false, smooth:false,
+      lineStyle:{color:'#22d3ee', width:LINE_W},
+      markPoint: bubbleMarkPoint('#22d3ee', p => fmtNum(p.value))
+    }]
+  });
+}
+renderXlogCpu();
+renderXlogSessions();
 
 function pushXlogPoint(ts, cpu, sessions) {
   const label = fmtTime24(new Date(ts * 1000));
   xlogData.time.push(label); xlogData.cpu.push(cpu); xlogData.sessions.push(sessions);
   if (xlogData.time.length > MAX_POINTS) { xlogData.time.shift(); xlogData.cpu.shift(); xlogData.sessions.shift(); }
-  renderXlog();
+  renderXlogCpu();
+  renderXlogSessions();
 }
 
 /* ================= Wait Class ================= */
@@ -745,8 +766,10 @@ async function fetchTrendComparison() {
   const skipWeekend = document.getElementById('trend-skip-weekend').checked;
   const showToday = document.getElementById('trend-today').checked;
   const showCompare = document.getElementById('trend-compare').checked;
+  trendChart.showLoading({ text: '조회 중...', color: '#4ade80', textColor: '#8a8a8a', maskColor: 'rgba(30,30,30,0.85)' });
   const res = await fetch(`/api/trend-comparison?stat=${encodeURIComponent(stat)}&skip_weekend=${skipWeekend}`);
   const data = await res.json();
+  trendChart.hideLoading();
 
   const series = [];
   if (showToday) {
@@ -930,7 +953,7 @@ connectWS();
 fetch('/api/xlog?minutes=30').then(r => r.json()).then(rows => {
   rows.forEach(r => pushXlogPoint(r.ts, r.cpu_pct, r.active_sessions));
 });
-fetch('/api/alerts?limit=30').then(r => r.json()).then(rows => { alertRows = rows; renderAlerts(); });
+fetch('/api/alerts?limit=30').then(r => r.json()).then(rows => { alertRows = rows; alertsLoaded = true; renderAlerts(); }).catch(() => { alertsLoaded = true; renderAlerts(); });
 </script>
 </body>
 </html>

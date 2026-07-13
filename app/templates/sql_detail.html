@@ -42,6 +42,9 @@
   .op-indent { display:inline-flex; flex-shrink:0; }
   .op-indent .branch { width:14px; height:14px; border-left:1px solid var(--hairline-strong); border-bottom:1px solid var(--hairline-strong); margin-top:-9px; }
   .op-depth0 { font-weight:700; }
+  .op-hot { color:#f87171; font-weight:700; }
+  .hot-badge { color:#f87171; font-weight:700; margin-right:4px; }
+  .plan-hot-row td { background:rgba(248,113,113,.07); }
   .panel-head-row { display:flex; justify-content:space-between; align-items:center; margin:0 0 14px 8px; }
   .panel-head-row h2 { margin:0; }
   .copy-btn {
@@ -94,21 +97,25 @@
       </tr></thead>
       <tbody>
         {% for p in detail.plan %}
-        <tr>
+        <tr class="{{ 'plan-hot-row' if p.high_impact else '' }}">
           <td data-sort="{{ p.id }}">{{ p.id }}</td>
           <td data-sort="{{ p.indented_op }} {{ p.options or '' }}">
             <div class="op-cell" style="padding-left: {{ p.depth * 18 }}px;">
               {% if p.depth > 0 %}<span class="op-indent"><span class="branch"></span></span>{% endif %}
-              <span class="{{ 'op-depth0' if p.depth == 0 else '' }}">{{ p.operation }}{{ ' ' + p.options if p.options else '' }}</span>
+              {% if p.high_impact %}<span class="hot-badge" title="성능에 영향을 줄 수 있는 단계 (FULL SCAN 또는 고비용 단계)">⚠</span>{% endif %}
+              <span class="{{ 'op-depth0' if p.depth == 0 else '' }}{{ ' op-hot' if p.high_impact else '' }}">{{ p.operation }}{{ ' ' + p.options if p.options else '' }}</span>
             </div>
           </td>
           <td data-sort="{{ p.object_name or '' }}">{{ p.object_name or '' }}</td>
-          <td data-sort="{{ p.cost if p.cost is not none else -1 }}">{{ p.cost if p.cost is not none else '-' }}</td>
+          <td data-sort="{{ p.cost if p.cost is not none else -1 }}" class="{{ 'op-hot' if p.high_impact else '' }}">{{ p.cost if p.cost is not none else '-' }}</td>
           <td data-sort="{{ p.cardinality if p.cardinality is not none else -1 }}">{{ p.cardinality if p.cardinality is not none else '-' }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    <div class="note" style="font-size:11px; color:var(--muted); margin-top:10px;">
+      <span class="hot-badge">⚠</span> <span class="op-hot">적색</span> 단계 = TABLE ACCESS FULL(인덱스 미사용 전체 스캔) 또는 해당 단계 cost가 플랜 전체 최대 cost의 50% 이상인 단계입니다.
+    </div>
   </div>
   {% endif %}
 </main>

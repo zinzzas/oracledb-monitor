@@ -1,4 +1,4 @@
-# Oracle DB Monitor
+# Oracle Monitor
 
 서버 접속 없이 **클라이언트에서 리스너로 접속**해 Oracle의 CPU/메모리/실행 중 쿼리/Lock/슬로우쿼리를
 실시간으로 모니터링하는 경량 대시보드. python-oracledb Thin mode 사용 (Oracle Instant Client 불필요).
