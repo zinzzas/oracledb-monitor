@@ -13,7 +13,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # .env 파일을 열어 ORACLE_USER / ORACLE_PASSWORD / ORACLE_DSN 채우기
 
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
 브라우저에서 http://localhost:8000 접속.

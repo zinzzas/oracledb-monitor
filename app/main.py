@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -18,6 +18,7 @@ from app.db.connection import get_pool, close_pool
 from app.db import queries
 from app.storage import sqlite_store
 from app.collectors import metrics_collector
+from app.export import excel_export
 
 logging.basicConfig(level=logging.INFO)
 
@@ -108,6 +109,13 @@ async def detail_page(request: Request, metric: str):
     )
 
 
+@app.get("/detail/plsql-calls/page", response_class=HTMLResponse)
+async def plsql_calls_detail_page(request: Request):
+    """PL/SQL Package Calls 전용 상세페이지. 차트가 아니라 날짜별 조회 테이블 + 엑셀
+    다운로드라 구조가 다른 detail.html 대신 전용 템플릿을 쓴다."""
+    return templates.TemplateResponse("plsql_calls_detail.html", {"request": request})
+
+
 # ---------------------------------------------------------------------------
 # REST API (HTMX 부분 갱신 / 초기 로딩용)
 # ---------------------------------------------------------------------------
@@ -141,6 +149,33 @@ async def api_xlog(minutes: int = 30):
 async def api_alerts(limit: int = 50):
     """Alert Log 패널 초기 로딩용 (이후는 WebSocket으로 신규 건만 push 된다)."""
     return await asyncio.to_thread(sqlite_store.get_recent_alerts, limit)
+
+
+@app.get("/api/plsql-calls")
+async def api_plsql_calls(minutes: int = 30, limit: int = 50):
+    """PL/SQL Package Calls 위젯 초기 로딩용 - 최근 N분간 패키지별 합계 호출횟수/수행시간.
+    V$SQL 누적 카운터 기반이라 V$SESSION 폴링 손실과 무관하게 집계된다."""
+    return await asyncio.to_thread(sqlite_store.get_recent_plsql_calls, minutes, limit)
+
+
+@app.get("/api/plsql-calls/range")
+async def api_plsql_calls_range(start: int, end: int):
+    """PL/SQL Package Calls 상세페이지 날짜별 조회 - 폴링 건단위 원시 row 목록."""
+    rows = await asyncio.to_thread(sqlite_store.get_plsql_call_log_range, start, end)
+    return {"rows": rows}
+
+
+@app.get("/api/plsql-calls/export")
+async def api_plsql_calls_export(start: int, end: int):
+    """PL/SQL Package Calls 날짜별 조회 결과를 엑셀로 다운로드."""
+    rows = await asyncio.to_thread(sqlite_store.get_plsql_call_log_range, start, end)
+    xlsx_bytes = excel_export.build_plsql_calls_excel(rows, start, end)
+    filename = f"plsql_package_calls_{start}_{end}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/sysstat-names")
@@ -192,6 +227,35 @@ async def api_long_session_queries(start: int, end: int, tier: Optional[str] = N
     """Long Active Session Count 막대 클릭 드릴다운 - 해당 구간/티어의 3초 이상 실행 스냅샷 목록."""
     rows = await asyncio.to_thread(sqlite_store.get_long_query_log, start, end, tier)
     return {"rows": rows}
+
+
+@app.get("/api/long-session/queries/export")
+async def api_long_session_queries_export(start: int, end: int, tier: Optional[str] = None):
+    """Long Active Session Count 드릴다운 결과를 엑셀로 다운로드. SQL_ID가 있는 로우에 한해
+    V$SQL_BIND_CAPTURE 최선노력 바인드값을 함께 담는다 (REF CURSOR/OUT 파라미터는 상당수
+    빈 란으로 남을 수 있음 - 안내 시트에 한계 명시)."""
+    rows = await asyncio.to_thread(sqlite_store.get_long_query_log, start, end, tier, 5000)
+
+    sql_ids = [r["sql_id"] for r in rows if r.get("sql_id")]
+    bind_map: dict[str, str] = {}
+    if sql_ids:
+        try:
+            pool = get_pool()
+            with pool.acquire() as conn:
+                bind_map = await asyncio.to_thread(queries.get_bind_capture_for_sql_ids, conn, sql_ids)
+        except Exception as e:
+            logging.getLogger("main").warning("bind capture 조회 실패(무시하고 계속): %s", e)
+
+    for r in rows:
+        r["bind_params_text"] = bind_map.get(r.get("sql_id"), "")
+
+    xlsx_bytes = excel_export.build_long_session_excel(rows, start, end)
+    filename = f"long_active_sessions_{start}_{end}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/trend-comparison")

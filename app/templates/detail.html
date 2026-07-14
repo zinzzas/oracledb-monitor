@@ -100,6 +100,9 @@
     </select>
     {% endif %}
     <button class="btn-retrieve" id="btn-retrieve">조회</button>
+    {% if metric == 'long-session' %}
+    <button class="btn-retrieve" id="btn-export" style="background:transparent; color:var(--primary); border-color:var(--primary);">엑셀 다운로드</button>
+    {% endif %}
   </div>
 
   <div class="panel">
@@ -162,6 +165,18 @@ document.getElementById('btn-retrieve').addEventListener('click', () => {
   fetchAndRender();
 });
 
+const exportBtn = document.getElementById('btn-export');
+if (exportBtn) {
+  exportBtn.addEventListener('click', () => {
+    const fromEl = document.getElementById('from-input');
+    const toEl = document.getElementById('to-input');
+    if (!fromEl.value || !toEl.value) return;
+    const start = Math.floor(new Date(fromEl.value).getTime() / 1000);
+    const end = Math.floor(new Date(toEl.value).getTime() / 1000);
+    window.location.href = `/api/long-session/queries/export?start=${start}&end=${end}`;
+  });
+}
+
 function ensureChart() {
   if (!chart) {
     chartEl.innerHTML = '';
@@ -208,14 +223,17 @@ async function openLongSessionDrilldown(startTs, endTs, tier) {
 
   const res = await fetch(`/api/long-session/queries?start=${startTs}&end=${endTs}&tier=${tier}`);
   const data = await res.json();
-  showDrilldownModal(data.rows || [], tier);
+  showDrilldownModal(data.rows || [], tier, null, startTs, endTs);
 }
 
-function showDrilldownModal(rows, tier, emptyMsg) {
+function showDrilldownModal(rows, tier, emptyMsg, startTs, endTs) {
   const label = tier ? TIER_LABEL[tier] : '';
   document.getElementById('modal-title').textContent = tier
     ? `${label} 실행 쿼리 (${rows.length}건)` : 'SQL 목록';
   const body = document.getElementById('modal-body');
+  const exportLink = (tier && startTs != null && rows.length > 0)
+    ? `<div class="hint" style="margin-top:12px;"><a href="/api/long-session/queries/export?start=${startTs}&end=${endTs}&tier=${tier}" class="sqlid">↓ 이 구간(${label}) 엑셀 다운로드</a></div>`
+    : '';
   if (rows.length === 0) {
     body.innerHTML = `<div class="loading">${emptyMsg || '해당 구간에 3초 이상 실행된 쿼리가 없습니다.'}</div>`;
   } else {
@@ -231,7 +249,8 @@ function showDrilldownModal(rows, tier, emptyMsg) {
             </tr>`).join('')}
         </tbody>
       </table>
-      <div class="hint">SQL_ID 클릭 시 새 탭에서 상세 SQL/실행계획으로 이동합니다. 패키지.프로시저 호출(PL/SQL RPC)은 Oracle 구조상 SQL_ID가 없어 링크 대신 SQL Text에 패키지.프로시저명을 표시합니다.</div>`;
+      <div class="hint">SQL_ID 클릭 시 새 탭에서 상세 SQL/실행계획으로 이동합니다. 패키지.프로시저 호출(PL/SQL RPC)은 Oracle 구조상 SQL_ID가 없어 링크 대신 SQL Text에 패키지.프로시저명을 표시합니다.</div>
+      ${exportLink}`;
   }
   document.getElementById('modal-overlay').classList.remove('hidden');
 }

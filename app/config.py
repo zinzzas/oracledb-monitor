@@ -25,5 +25,12 @@ class Settings(BaseSettings):
     alert_high_pct: float = 70.0
     alert_crit_pct: float = 80.0
 
+    # Active Sessions/Lock 전용 고빈도 폴링 (초). 메인 5초 수집 사이에 끝나는
+    # REF CURSOR fetch처럼 짧은 실행을 놓치지 않기 위해 별도 스케줄러로 더 자주 돌린다.
+    # V$SESSION/V$LOCK만 가벼게 조회하므로 1초 간격도 대부분의 Oracle 인스턴스에서 안전하나,
+    # 인스턴스가 민감하면 .env에서 늘려서 조정할 것.
+    fast_poll_interval_sec: float = 1.0
+    fast_poll_enabled: bool = True
+
 
 settings = Settings()

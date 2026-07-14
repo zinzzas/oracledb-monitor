@@ -148,7 +148,7 @@ def get_active_sessions(conn) -> list[dict]:
                 s.seconds_in_wait,
                 s.last_call_et       AS elapsed_sec,
                 s.blocking_session,
-                s.sql_id,
+                COALESCE(s.sql_id, s.prev_sql_id) AS sql_id,
                 s.module,
                 s.program,
                 s.p1,
@@ -156,22 +156,34 @@ def get_active_sessions(conn) -> list[dict]:
                 s.p3,
                 ROUND(p.pga_alloc_mem / 1024 / 1024, 1) AS pga_mb,
                 sc.command_name      AS command_text,
-                sq.sql_text,
+                (SELECT sql_text FROM v$sql
+                  WHERE sql_id = COALESCE(s.sql_id, s.prev_sql_id) AND ROWNUM = 1) AS sql_text,
                 peo.owner            AS plsql_owner,
                 peo.object_name      AS plsql_package_name,
                 pep.procedure_name   AS plsql_procedure_name
             FROM v$session s
-            LEFT JOIN v$sql sq ON s.sql_id = sq.sql_id AND sq.child_number = 0
             LEFT JOIN v$process p ON s.paddr = p.addr
             LEFT JOIN v$sqlcommand sc ON s.command = sc.command_type
-            LEFT JOIN all_objects peo ON peo.object_id = s.plsql_entry_object_id
+            LEFT JOIN all_objects peo
+                   ON peo.object_id = COALESCE(s.plsql_entry_object_id, s.plsql_object_id)
             LEFT JOIN all_procedures pep
-                   ON pep.object_id = s.plsql_entry_object_id
-                  AND pep.subprogram_id = s.plsql_entry_subprogram_id
+                   ON pep.object_id = COALESCE(s.plsql_entry_object_id, s.plsql_object_id)
+                  AND pep.subprogram_id = COALESCE(s.plsql_entry_subprogram_id, s.plsql_subprogram_id)
             WHERE s.username IS NOT NULL
-              AND s.status = 'ACTIVE'
               AND s.type = 'USER'
-            ORDER BY s.last_call_et DESC
+              AND (
+                    s.status = 'ACTIVE'
+                    -- REF CURSOR OUT 패키지 호출(MyBatis CALLABLE)은 대부분의 시간을
+                    -- fetch 사이 "SQL*Net message from client" 대기로 보내서 STATUS='INACTIVE'로
+                    -- 보인다. plsql_object_id/plsql_entry_object_id가 남아있고 방금(5초 이내)
+                    -- 유휴가 된 세션은 "PL/SQL 패키지 fetch 구간 사이"로 보고 함께 노출한다.
+                    OR (
+                         s.status = 'INACTIVE'
+                         AND s.last_call_et <= 5
+                         AND (s.plsql_object_id IS NOT NULL OR s.plsql_entry_object_id IS NOT NULL)
+                       )
+                  )
+            ORDER BY CASE WHEN s.status = 'ACTIVE' THEN 0 ELSE 1 END, s.last_call_et DESC
             """
         )
         return _apply_plsql_fallback_label(_rows_as_dicts(cur))
@@ -181,7 +193,9 @@ def _apply_plsql_fallback_label(rows: list[dict]) -> list[dict]:
     """MyBatis의 CallableStatement로 패키지 프로시저를 호출하는 경우(RPC성 PL/SQL 호출)
     Oracle 10.2+ 부터 V$SESSION.SQL_ID 가 NULL로 나온다 (top-level SQL이 없는 구조적 특성).
     이 경우 SQL_ID/SQL_TEXT 대신 PLSQL_ENTRY_OBJECT_ID/SUBPROGRAM_ID로 실행 중인
-    패키지.프로시저를 식별해 sql_text 자리에 대체 표시한다."""
+    패키지.프로시저를 식별해 sql_text 자리에 대체 표시한다.
+    is_idle_recent: STATUS='INACTIVE'인데 포함된 row (REF CURSOR fetch 사이 구간)를
+    프론트에서 실제 실행 중과 구별해 표시하기 위한 플래그."""
     for r in rows:
         is_plsql = False
         if not r.get("sql_text") and r.get("plsql_package_name"):
@@ -198,6 +212,7 @@ def _apply_plsql_fallback_label(rows: list[dict]) -> list[dict]:
         r.pop("plsql_package_name", None)
         r.pop("plsql_procedure_name", None)
         r["is_plsql_call"] = is_plsql
+        r["is_idle_recent"] = r.get("status") != "ACTIVE"
     return rows
 
 
@@ -431,3 +446,65 @@ def get_session_counts(conn) -> dict:
     active = counts.get("active", 0)
     inactive = counts.get("inactive", 0)
     return {"total": active + inactive, "active": active, "inactive": inactive}
+
+
+# ---------------------------------------------------------------------------
+# 11) PL/SQL 패키지/프로시저 호출 통계 (호출 횟수 + 수행시간)
+#
+#    V$SESSION 폴링은 시점 기반(point-in-time) 샘플링이라 REF CURSOR fetch처럼
+#    짧은 실행을 놓칠 수 있지만, V$SQL.EXECUTIONS/ELAPSED_TIME은 Oracle이 우리 폴링과
+#    무관하게 계속 누적하는 카운터라, 호출 횟수/수행시간은 폴링 손실이 전혀 없다
+#    (sysstat 델타 계산과 동일한 원리). COMMAND_TYPE=47은 "PL/SQL EXECUTE"로 여러 독립
+#    소스(Oracle 공식 V$SQLCOMMAND 문서 포함)로 교차 확인됨.
+# ---------------------------------------------------------------------------
+
+def get_plsql_call_stats(conn) -> list[dict]:
+    """PL/SQL 블록(패키지/프로시저 호출)의 누적 실행 통계. sql_id 단위 raw row 리스트를
+    돌려주며, 패키지명 파싱/집계는 호출부(collector)에서 처리해 순수 SQL로 유지한다."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT sql_id, sql_text, executions, elapsed_time, cpu_time
+            FROM v$sql
+            WHERE command_type = 47
+              AND executions > 0
+            """
+        )
+        return _rows_as_dicts(cur)
+
+
+# ---------------------------------------------------------------------------
+# 12) 바인드 파라미터값 (최선노력, 신뢰도 낮음)
+#
+#    V$SQL_BIND_CAPTURE는 라이선스 무관 기본 뷰이지만, 커서당 최대 15분 간격으로만 샘플링되고
+#    (_cursor_bind_capture_interval), WHERE/HAVING절의 단순 타입 바인드만 캡처된다
+#    (LONG/LOB/객체/REF CURSOR 제외). 즉 "이 특정 실행"의 값이 아니라 "최근 어느 시점에
+#    캐치된 값"이며, 이 프로젝트가 다뤄온 MyBatis REF CURSOR OUT 패턴은 애초에 캡처
+#    대상이 아니다. 그래도 IN 바인드 위주인 일반 매퍼 쿼리에는 가끔 유용해 참고용으로 제공한다.
+# ---------------------------------------------------------------------------
+
+def get_bind_capture_for_sql_ids(conn, sql_ids: list[str]) -> dict[str, str]:
+    """sql_id 목록에 대해 V$SQL_BIND_CAPTURE를 조회해 "P1=val1, P2=val2" 형태의
+    문자열로 묶어 sql_id -> 문자열 딜시너리를 돌려준다. 캐처 목 값 자체가 없는 sql_id는
+    결과에서 생략된다 (호출부에서 .get()으로 빈 문자열 처리)."""
+    if not sql_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(sql_ids))[:200]  # 액셀별 숨기기 방지 + 과도한 조회 제한
+    placeholders = {f"id{i}": v for i, v in enumerate(unique_ids)}
+    in_clause = ", ".join(f":{k}" for k in placeholders)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT sql_id, position, name, value_string, was_captured
+            FROM v$sql_bind_capture
+            WHERE sql_id IN ({in_clause})
+              AND was_captured = 'YES'
+            ORDER BY sql_id, position
+            """,
+            placeholders,
+        )
+        by_sql: dict[str, list[str]] = {}
+        for sql_id, position, name, value_string, _ in cur.fetchall():
+            label = name or f"P{position}"
+            by_sql.setdefault(sql_id, []).append(f"{label}={value_string}")
+    return {sid: ", ".join(parts) for sid, parts in by_sql.items()}

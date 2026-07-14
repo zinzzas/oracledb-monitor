@@ -138,6 +138,11 @@
     border-radius:3px; padding:0 4px; margin-right:5px; vertical-align:1px;
   }
   .plsql-text { color:#c4b5fd; }
+  .idle-badge {
+    display:inline-block; font-size:9.5px; font-weight:700; color:#fbbf24; border:1px solid #fbbf24;
+    border-radius:3px; padding:0 4px; margin-right:5px; vertical-align:1px;
+  }
+  tr.idle-recent td { opacity:.72; }
 
   /* ---- 모달 (드래그 브러시 -> 상세 팝업) ---- */
   .modal-overlay {
@@ -274,6 +279,18 @@
       </div>
       <div id="longsession-chart" class="mini-chart"></div>
     </div>
+  </div>
+
+  <div class="panel" id="plsql-panel">
+    <div class="panel-head">
+      <h2>PL/SQL Package Calls (최근 5분 누적)</h2>
+      <a class="detail-link" href="/detail/plsql-calls/page" target="_blank" rel="noopener">상세보기 →</a>
+    </div>
+    <table>
+      <thead><tr><th>Package.Procedure</th><th>Calls</th><th>Avg(ms)</th><th>Total(sec)</th></tr></thead>
+      <tbody id="plsql-body"><tr><td colspan="4" class="empty"><span class="spinner"></span>조회 중...</td></tr></tbody>
+    </table>
+    <div class="scatter-hint">V$SQL 누적 카운터(EXECUTIONS/ELAPSED_TIME) 기반으로 집계되어, V$SESSION 폴링 손실과 무관하게 호출 횟수/수행시간이 정확합니다. 패키지명은 SQL_TEXT 파싱 기반 최선 노력입니다.</div>
   </div>
 
   <div class="grid2">
@@ -762,6 +779,55 @@ function pushLongSession(ts, data) {
   renderLongSession();
 }
 
+/* ================= PL/SQL Package Calls (5분 롤링 윈도우 누적) ================= */
+// V$SQL 누적 카운터 기반이라 매 5초 폴링의 델타는 폴링 손실이 없지만, 하나의 델타만 보여주면
+// 화면이 너무 자주 요동치므로 최근 N분치 델타를 클라이언트에서 누적/만료하며 재집계해 보여준다.
+const PLSQL_WINDOW_SEC = 300;
+let plsqlHistory = []; // [{ts, rows: [{proc_name, calls, total_elapsed_ms}]}]
+let plsqlLoaded = false;
+
+function renderPlsqlTable(rows) {
+  const body = document.getElementById('plsql-body');
+  if (!plsqlLoaded) { body.innerHTML = '<tr><td colspan="4" class="empty"><span class="spinner"></span>조회 중...</td></tr>'; return; }
+  if (!rows || rows.length === 0) { body.innerHTML = '<tr><td colspan="4" class="empty">최근 5분간 PL/SQL 패키지 호출 없음</td></tr>'; return; }
+  body.innerHTML = rows.slice(0, 20).map(r => `
+    <tr>
+      <td title="${esc(r.proc_name)}">${esc((r.proc_name||'').slice(0,60))}</td>
+      <td>${fmtNum(r.calls)}</td>
+      <td>${fmtNum(r.avg_elapsed_ms)}</td>
+      <td>${fmtNum(Math.round((r.total_elapsed_ms||0)/10)/100)}</td>
+    </tr>`).join('');
+}
+
+function renderPlsqlFromHistory() {
+  const agg = {};
+  plsqlHistory.forEach(h => {
+    (h.rows || []).forEach(r => {
+      const a = agg[r.proc_name] || (agg[r.proc_name] = { calls: 0, total_elapsed_ms: 0 });
+      a.calls += r.calls || 0;
+      a.total_elapsed_ms += r.total_elapsed_ms || 0;
+    });
+  });
+  const list = Object.entries(agg).map(([proc_name, a]) => ({
+    proc_name, calls: a.calls, total_elapsed_ms: a.total_elapsed_ms,
+    avg_elapsed_ms: a.calls ? Math.round(a.total_elapsed_ms / a.calls * 100) / 100 : 0,
+  })).sort((a, b) => b.total_elapsed_ms - a.total_elapsed_ms);
+  renderPlsqlTable(list);
+}
+
+function pushPlsqlCalls(rows) {
+  // 빈 배열이어도 조기 리턴하지 않는다 - 호출이 없는 폴링이도 만료 검사/재렌더링을 돌려야
+  // 패키지 호출이 멈춘 후 5분이 지난 항목이 테이블에 계속 남아있는 버그를 방지한다.
+  plsqlLoaded = true;
+  const nowSec = Date.now() / 1000;
+  if (rows && rows.length > 0) {
+    plsqlHistory.push({ ts: nowSec, rows });
+  }
+  const cutoff = nowSec - PLSQL_WINDOW_SEC;
+  plsqlHistory = plsqlHistory.filter(h => h.ts >= cutoff);
+  renderPlsqlFromHistory();
+}
+
 /* ================= 24 Hours Trend Comparison ================= */
 const trendChart = echarts.init(document.getElementById('trend-chart'), null, {renderer:'svg'});
 trackChart(trendChart);
@@ -865,9 +931,9 @@ function renderSessions(rows) {
   const sorted = sortRows(lastSessions, sessionSort.key, sessionSort.dir);
   if (sorted.length === 0) { body.innerHTML = '<tr><td colspan="13" class="empty">현재 실행 중인 쿼리 없음</td></tr>'; return; }
   body.innerHTML = sorted.map((r, i) => `
-    <tr>
+    <tr class="${r.is_idle_recent ? 'idle-recent' : ''}">
       <td>${esc(r.sid)}</td><td>${esc(r.username)}</td><td>${esc(r.module)}</td><td title="${esc(r.program)}">${esc((r.program||'').split(/[\\\/]/).pop())}</td>
-      <td>${esc(r.elapsed_sec)}</td><td>${esc(r.pga_mb)}</td><td>${esc(r.command_text)}</td>
+      <td>${r.is_idle_recent ? `<span class="idle-badge" title="REF CURSOR fetch 사이 대기 구간 (실제 실행 아님)">IDLE</span>` : ''}${esc(r.elapsed_sec)}</td><td>${esc(r.pga_mb)}</td><td>${esc(r.command_text)}</td>
       <td>${esc(r.p1)}</td><td>${esc(r.p2)}</td><td>${esc(r.p3)}</td>
       <td>${r.sql_id ? `<a class="sqlid" href="/sql/${esc(r.sql_id)}" target="_blank" rel="noopener">${esc(r.sql_id)}</a>` : '-'}</td>
       <td title="${esc(r.sql_text)}" class="${r.is_plsql_call ? 'plsql-text' : ''}">${r.is_plsql_call ? '<span class="plsql-badge">PL/SQL</span>' : ''}${esc((r.sql_text||'').slice(0,60))}</td>
@@ -946,6 +1012,7 @@ function applyUpdate(msg) {
   if (msg.sysstat_live) pushRate(nowTs, msg.sysstat_live);
   pushScatterPoints(Date.now(), msg.sessions);
   if (msg.long_session_counts) pushLongSession(nowTs, msg.long_session_counts);
+  if (msg.plsql_calls) pushPlsqlCalls(msg.plsql_calls);
   if (msg.alerts && msg.alerts.length) prependAlerts(msg.alerts);
 }
 
@@ -957,7 +1024,20 @@ function connectWS() {
   ws.onopen = () => { badge.textContent = 'LIVE'; badge.classList.add('live'); };
   ws.onclose = () => { badge.textContent = '재연결 중...'; badge.classList.remove('live'); setTimeout(connectWS, 2000); };
   ws.onerror = () => ws.close();
-  ws.onmessage = (evt) => { try { applyUpdate(JSON.parse(evt.data)); } catch(e) { console.error(e); } };
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === 'fast_update') {
+        // 1초 주기 경량 업데이트 - Active Sessions/Lock만 갱신하고 차트는 건드리지 않는다
+        // (X-log 등은 5초 카던스에 맞춰 설계되어 있어 1Hz로 재렌더링하면 오히려 지저분).
+        renderSessions(msg.sessions);
+        renderLocks(msg.locks);
+        pushScatterPoints(Date.now(), msg.sessions);
+        return;
+      }
+      applyUpdate(msg);
+    } catch(e) { console.error(e); }
+  };
 }
 connectWS();
 
@@ -966,6 +1046,13 @@ fetch('/api/xlog?minutes=30').then(r => r.json()).then(rows => {
   rows.forEach(r => pushXlogPoint(r.ts, r.cpu_pct, r.active_sessions));
 });
 fetch('/api/alerts?limit=30').then(r => r.json()).then(rows => { alertRows = rows; alertsLoaded = true; renderAlerts(); }).catch(() => { alertsLoaded = true; renderAlerts(); });
+fetch('/api/plsql-calls?minutes=5').then(r => r.json()).then(rows => {
+  if (rows && rows.length) {
+    plsqlHistory.push({ ts: Date.now() / 1000, rows: rows.map(r => ({ proc_name: r.proc_name, calls: r.calls, total_elapsed_ms: r.total_elapsed_ms })) });
+  }
+  plsqlLoaded = true;
+  renderPlsqlFromHistory();
+}).catch(() => { plsqlLoaded = true; renderPlsqlFromHistory(); });
 </script>
 </body>
 </html>

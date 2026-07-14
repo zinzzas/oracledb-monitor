@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS long_query_log (
     is_plsql_call INTEGER  -- 0/1 - SQL_ID 없는 패키지.프로시저 호출인지 플래그
 );
 CREATE INDEX IF NOT EXISTS idx_longquery_ts ON long_query_log(ts);
+
+CREATE TABLE IF NOT EXISTS plsql_call_snapshot (
+    ts               INTEGER NOT NULL,
+    proc_name        TEXT NOT NULL,   -- 파싱된 패키지.프로시저명 (또는 파싱 실패 시 sql_text 앞부분)
+    calls            INTEGER,         -- 이 폴링 구간의 호출 횟수 델타 (V$SQL.EXECUTIONS 기반, 폴링 손실 없음)
+    avg_elapsed_ms   REAL,
+    total_elapsed_ms REAL
+);
+CREATE INDEX IF NOT EXISTS idx_plsqlcall_ts ON plsql_call_snapshot(ts);
 """
 
 
@@ -227,6 +236,7 @@ def write_poll_batch(
     wait_class_rows: list[dict] | None = None,
     cpu_breakdown: dict | None = None,
     sysstat_rows: list[dict] | None = None,
+    plsql_call_rows: list[dict] | None = None,
 ):
     """수집기 한 번의 폴링에서 나오는 모든 쓰기를 단일 커넥션/트랜잭션으로 묶는다.
     이전에는 폴링마다 7~9개의 개별 커넥션을 열고 닫았는데, 이를 하나로 합쳤다.
@@ -314,6 +324,16 @@ def write_poll_batch(
                 [(ts, r["stat_name"], r["rate_per_sec"], r["delta_value"]) for r in sysstat_rows],
             )
 
+        if plsql_call_rows:
+            conn.executemany(
+                "INSERT INTO plsql_call_snapshot (ts, proc_name, calls, avg_elapsed_ms, total_elapsed_ms) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (ts, r["proc_name"], r["calls"], r["avg_elapsed_ms"], r["total_elapsed_ms"])
+                    for r in plsql_call_rows
+                ],
+            )
+
         conn.commit()
 
 
@@ -325,6 +345,44 @@ def get_xlog(minutes: int = 30) -> list[dict]:
             "SELECT ts, cpu_pct, mem_used_mb, mem_total_mb, active_sessions "
             "FROM metric_snapshot WHERE ts >= ? ORDER BY ts ASC",
             (since,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_recent_plsql_calls(minutes: int = 30, limit: int = 50) -> list[dict]:
+    """대시보드 PL/SQL Package Calls 위젯 초기 로딩용 - 최근 N분간 패키지별 합계 호출횟수/수행시간."""
+    since = int(time.time()) - minutes * 60
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT proc_name, SUM(calls) AS calls, SUM(total_elapsed_ms) AS total_elapsed_ms,
+                   ROUND(SUM(total_elapsed_ms) / SUM(calls), 2) AS avg_elapsed_ms
+            FROM plsql_call_snapshot
+            WHERE ts >= ?
+            GROUP BY proc_name
+            ORDER BY total_elapsed_ms DESC
+            LIMIT ?
+            """,
+            (since, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_plsql_call_log_range(start_ts: int, end_ts: int, limit: int = 2000) -> list[dict]:
+    """PL/SQL Package Calls 상세페이지(날짜별 조회) + 엑셀 다운로드용 - 폴링 건단위
+    원시 row 그대로(패키지명 집계 안 함) 시간순 정렬해 반환한다."""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT ts, proc_name, calls, avg_elapsed_ms, total_elapsed_ms
+            FROM plsql_call_snapshot
+            WHERE ts BETWEEN ? AND ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (start_ts, end_ts, limit),
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -342,6 +400,7 @@ def purge_old(retention_hours: int | None = None):
         conn.execute("DELETE FROM session_count_snapshot WHERE ts < ?", (cutoff,))
         conn.execute("DELETE FROM long_session_snapshot WHERE ts < ?", (cutoff,))
         conn.execute("DELETE FROM long_query_log WHERE ts < ?", (cutoff,))
+        conn.execute("DELETE FROM plsql_call_snapshot WHERE ts < ?", (cutoff,))
         # alert_log는 저빈도·고가치 데이터라 7배 더 오래 보관
         conn.execute("DELETE FROM alert_log WHERE ts < ?", (cutoff - retention_hours * 3600 * 6,))
         conn.commit()

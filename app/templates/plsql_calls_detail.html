@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>PL/SQL Package Calls · Oracle Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #121212; --panel: #1e1e1e; --panel-border: #2a2a2a;
+    --text: #e8e8e8; --body-c: #d0d0d0; --muted: #8a8a8a;
+    --hairline: #333333; --hairline-strong: #444444; --surface-soft: #252525;
+    --surface-dark: #0d0d0d;
+    --on-dark: #ffffff; --on-primary: #0a0a0a;
+    --primary: #4ade80; --primary-dark: #22c55e;
+    --radius: 4px;
+    --font: 'Inter', Arial, Helvetica, sans-serif;
+    --gap-sm: 12px; --gap-md: 20px; --gap-lg: 24px;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font); }
+  header { display:flex; align-items:center; gap:var(--gap-sm); padding:0 var(--gap-lg); height:48px; background:var(--surface-dark); border-bottom:1px solid var(--panel-border); }
+  header a.back {
+    color:var(--on-dark); text-decoration:none; font-size:12px; font-weight:700;
+    border:1px solid var(--hairline-strong); border-radius:999px; padding:5px 14px;
+  }
+  header a.back:hover { background:var(--primary); color:var(--on-primary); border-color:var(--primary); }
+  header h1 { font-size:14px; margin:0; font-weight:700; color:var(--on-dark); letter-spacing:.02em; }
+  main { padding:var(--gap-lg); padding-bottom:48px; max-width:1320px; margin:0 auto; display:flex; flex-direction:column; gap:var(--gap-md); }
+
+  .searchbar {
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:var(--gap-md); display:flex; flex-wrap:wrap; align-items:center; gap:var(--gap-sm);
+  }
+  .searchbar label { font-size:11px; color:var(--muted); margin-right:2px; font-weight:700; text-transform:uppercase; }
+  .searchbar input { background:var(--surface-soft); border:1px solid var(--hairline); color:var(--text); border-radius:var(--radius); padding:8px 10px; font-size:12.5px; font-family:var(--font); }
+  .quickbtn {
+    background:transparent; border:1px solid var(--hairline); color:var(--text); border-radius:999px;
+    padding:7px 16px; font-size:12px; font-weight:700; cursor:pointer; font-family:var(--font);
+  }
+  .quickbtn:hover { border-color:var(--body-c); }
+  .quickbtn.active { background:var(--primary); border-color:var(--primary); color:var(--on-primary); }
+  .btn-retrieve {
+    background:var(--primary); border:1px solid var(--primary); color:var(--on-primary); border-radius:999px;
+    padding:8px 20px; font-size:12px; cursor:pointer; font-weight:700; font-family:var(--font);
+  }
+  .btn-retrieve:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
+  .btn-export {
+    background:transparent; border:1px solid var(--primary); color:var(--primary); border-radius:999px;
+    padding:8px 20px; font-size:12px; cursor:pointer; font-weight:700; font-family:var(--font);
+  }
+  .btn-export:hover { background:rgba(74,222,128,.12); }
+  .sep { width:1px; height:22px; background:var(--hairline); margin:0 4px; }
+
+  .panel { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:var(--gap-md); }
+  .panel h2 { font-size:12px; color:var(--body-c); margin:0 0 var(--gap-sm) 0; letter-spacing:.02em; font-weight:700; }
+  .note { font-size:12px; color:var(--muted); margin-top:12px; line-height:1.6; }
+
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:700; padding:9px 10px; border-bottom:1px solid var(--hairline-strong); font-size:11px; text-transform:uppercase; }
+  td { padding:9px 10px; border-bottom:1px solid var(--hairline); color:var(--body-c); }
+  tr:hover td { background:var(--surface-soft); }
+  .empty { color:var(--muted); font-size:13px; padding:20px 0; text-align:center; }
+  .spinner {
+    display:inline-block; width:13px; height:13px; margin-right:7px; vertical-align:-2px;
+    border:2px solid var(--hairline-strong); border-top-color:var(--primary); border-radius:50%;
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← 대시보드로</a>
+  <h1>PL/SQL Package Calls</h1>
+</header>
+<main>
+  <div class="searchbar">
+    <button class="quickbtn" data-range="1h">최근 1시간</button>
+    <button class="quickbtn" data-range="6h">최근 6시간</button>
+    <button class="quickbtn" data-range="24h">24시간</button>
+    <button class="quickbtn" data-range="today">오늘</button>
+    <button class="quickbtn" data-range="yesterday">어제</button>
+    <div class="sep"></div>
+    <label>From</label>
+    <input type="datetime-local" id="from-input">
+    <label>To</label>
+    <input type="datetime-local" id="to-input">
+    <button class="btn-retrieve" id="btn-retrieve">조회</button>
+    <button class="btn-export" id="btn-export">엑셀 다운로드</button>
+  </div>
+
+  <div class="panel">
+    <h2>패키지.프로시저별 호출 이력 (폴링 구간 단위, V$SQL 누적 카운터 기반)</h2>
+    <table>
+      <thead><tr><th>시각</th><th>Package.Procedure</th><th>Calls</th><th>Avg(ms)</th><th>Total(sec)</th></tr></thead>
+      <tbody id="rows-body"><tr><td colspan="5" class="empty">조회 버튼을 눌러 데이터를 불러오세요.</td></tr></tbody>
+    </table>
+    <div class="note">
+      V$SQL.EXECUTIONS/ELAPSED_TIME 누적 카운터 기반 델타라 V$SESSION 폴링 손실과 무관하게 정확합니다.
+      Package.Procedure명은 SQL_TEXT 파싱 기반 최선노력이라, 복잡한 멀티스테이트먼트 블록은 원문 앞부분이 대신 표시될 수 있습니다.
+    </div>
+  </div>
+</main>
+
+<script>
+const esc = (s) => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toLocalInputValue(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setRange(from, to) {
+  document.getElementById('from-input').value = toLocalInputValue(from);
+  document.getElementById('to-input').value = toLocalInputValue(to);
+}
+
+function applyQuickRange(kind) {
+  const now = new Date();
+  let from, to = now;
+  if (kind === '1h') { from = new Date(now.getTime() - 3600 * 1000); }
+  else if (kind === '6h') { from = new Date(now.getTime() - 6 * 3600 * 1000); }
+  else if (kind === '24h') { from = new Date(now.getTime() - 24 * 3600 * 1000); }
+  else if (kind === 'today') { from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0); }
+  else if (kind === 'yesterday') {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    from = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0);
+    to = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59);
+  }
+  setRange(from, to);
+  document.querySelectorAll('.quickbtn').forEach(b => b.classList.toggle('active', b.dataset.range === kind));
+  fetchAndRender();
+}
+
+document.querySelectorAll('.quickbtn').forEach(btn => {
+  btn.addEventListener('click', () => applyQuickRange(btn.dataset.range));
+});
+document.getElementById('btn-retrieve').addEventListener('click', () => {
+  document.querySelectorAll('.quickbtn').forEach(b => b.classList.remove('active'));
+  fetchAndRender();
+});
+document.getElementById('btn-export').addEventListener('click', () => {
+  const { start, end } = currentRange();
+  if (start == null) return;
+  window.location.href = `/api/plsql-calls/export?start=${start}&end=${end}`;
+});
+
+function currentRange() {
+  const fromEl = document.getElementById('from-input');
+  const toEl = document.getElementById('to-input');
+  if (!fromEl.value || !toEl.value) return { start: null, end: null };
+  return {
+    start: Math.floor(new Date(fromEl.value).getTime() / 1000),
+    end: Math.floor(new Date(toEl.value).getTime() / 1000),
+  };
+}
+
+function tsToLabel(tsSec) {
+  const d = new Date(tsSec * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function renderRows(rows) {
+  const body = document.getElementById('rows-body');
+  if (!rows || rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">해당 구간에 PL/SQL 패키지 호출 이력이 없습니다.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(tsToLabel(r.ts))}</td>
+      <td title="${esc(r.proc_name)}">${esc((r.proc_name||'').slice(0,80))}</td>
+      <td>${esc(r.calls)}</td>
+      <td>${esc(r.avg_elapsed_ms)}</td>
+      <td>${esc(Math.round((r.total_elapsed_ms||0)/10)/100)}</td>
+    </tr>`).join('');
+}
+
+async function fetchAndRender() {
+  const { start, end } = currentRange();
+  if (start == null) { applyQuickRange('6h'); return; }
+  document.getElementById('rows-body').innerHTML = '<tr><td colspan="5" class="empty"><span class="spinner"></span>조회 중...</td></tr>';
+  const res = await fetch(`/api/plsql-calls/range?start=${start}&end=${end}`);
+  const data = await res.json();
+  renderRows(data.rows || []);
+}
+
+applyQuickRange('6h');
+</script>
+</body>
+</html>
